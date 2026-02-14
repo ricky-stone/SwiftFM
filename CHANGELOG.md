@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.6 - 2026-02-14
+
+### Changed
+- Replaced `Examples/PromptLab.swift` with a real playground bundle:
+  - `Examples/PromptLab.playground/Contents.swift`
+  - `Examples/PromptLab.playground/contents.xcplayground`
+- Updated README quick-run instructions to open `PromptLab.playground`.
+- Added a troubleshooting note for missing play button.
+- Updated README version references to `1.1.6`.
+
 ## 1.1.5 - 2026-02-14
 
 ### Changed
