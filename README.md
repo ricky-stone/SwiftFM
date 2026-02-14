@@ -28,7 +28,7 @@ Use Swift Package Manager with:
 
 - `https://github.com/ricky-stone/SwiftFM.git`
 
-Use `1.1.9` or newer.
+Use `1.1.10` or newer.
 
 ## Fast Start
 
@@ -427,4 +427,4 @@ Thanks to everyone who tests, reports issues, and contributes improvements.
 
 ## Version
 
-Current release tag: `1.1.9`
+Current release tag: `1.1.10`

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.10 - 2026-02-14
+
+### Fixed
+- Added a root `LICENSE` file (MIT) so GitHub and badge providers correctly detect project licensing.
+- Updated README version references to `1.1.10`.
+
 ## 1.1.9 - 2026-02-14
 
 ### Changed
