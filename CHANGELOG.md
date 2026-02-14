@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.5 - 2026-02-14
+
+### Changed
+- Added a playground-first onboarding path in README:
+  - new "Run in 60 Seconds (Xcode Playground)" section
+  - clear quick-run steps
+- Added `Examples/PromptLab.swift` with runnable `#Playground` examples for:
+  - plain prompt generation
+  - prompt + context generation
+  - streaming delta output
+  - guided typed generation
+- Updated README version references to `1.1.5`.
+
 ## 1.1.4 - 2026-02-14
 
 ### Changed

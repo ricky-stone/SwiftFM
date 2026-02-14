@@ -21,7 +21,22 @@ Use Swift Package Manager with:
 
 - `https://github.com/ricky-stone/SwiftFM.git`
 
-Use `1.1.3` or newer.
+Use `1.1.5` or newer.
+
+## Run in 60 Seconds (Xcode Playground)
+
+Fastest way to try SwiftFM:
+
+1. Clone this repo and open it in Xcode.
+2. Open `Examples/PromptLab.swift`.
+3. Run the `#Playground` block.
+4. Read output in the console.
+
+Notes:
+
+- This is the official quick-run path for this repo.
+- Requires macOS 26+ with Apple Intelligence enabled.
+- If model is unavailable, the example prints a helpful message and exits.
 
 ## Fast Start
 
@@ -420,4 +435,4 @@ Thanks to everyone who tests, reports issues, and contributes improvements.
 
 ## Version
 
-Current release tag: `1.1.4`
+Current release tag: `1.1.5`
