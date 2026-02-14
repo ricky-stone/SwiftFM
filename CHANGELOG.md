@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.1 - 2026-02-14
+
+### Changed
+- Expanded README session helper docs with beginner-friendly explanations for:
+  - `prewarm(promptPrefix:)`
+  - `isBusy`
+  - `transcript`
+  - `resetConversation()`
+- Added a practical usage flow for session lifecycle management.
+
 ## 1.1.0 - 2026-02-14
 
 ### Added

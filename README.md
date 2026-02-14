@@ -32,7 +32,7 @@ You send a prompt, you get a string.
 
 1. In Xcode, open `File` -> `Add Package Dependencies...`
 2. Enter `https://github.com/ricky-stone/SwiftFM`
-3. Choose version `1.1.0` or newer
+3. Choose version `1.1.1` or newer
 
 ## 1. Quick Start
 
@@ -328,6 +328,48 @@ let fm = SwiftFM(config: .init(system: "You are a concise analyst."))
 await fm.prewarm(promptPrefix: "Match analysis")
 let busy = await fm.isBusy
 let transcript = await fm.transcript
+await fm.resetConversation()
+```
+
+What each one does:
+
+- `prewarm(promptPrefix:)`
+: Prepares the model session so the first real response usually starts faster.
+  Think of it as warming the engine before you drive.
+  Use this before your first important request (for example when a screen opens).
+
+- `isBusy`
+: `true` when the session is currently generating a response.
+  Use it to disable your send button, avoid duplicate requests, or show a loading state.
+
+- `transcript`
+: The in-memory conversation history for this `SwiftFM` instance.
+  It includes instructions, prompts, model responses, and tool-call entries.
+  Use it for debugging or building chat UIs that inspect prior turns.
+
+- `resetConversation()`
+: Clears the current session history and starts a fresh session with the same base config.
+  Use this when the user taps "New Chat" or when you want to remove old context.
+
+Simple usage pattern:
+
+```swift
+let fm = SwiftFM(config: .init(system: "You are a concise analyst."))
+
+// 1) Warm up once when the view starts
+await fm.prewarm(promptPrefix: "Match analysis")
+
+// 2) Before sending, check if another request is still running
+guard await !fm.isBusy else { return }
+
+// 3) Send request(s)...
+let text = try await fm.generateText(for: "Preview this match in 3 bullets.")
+
+// 4) Inspect conversation if needed
+let history = await fm.transcript
+print("Transcript entries:", history.count)
+
+// 5) Start fresh when user wants a new thread
 await fm.resetConversation()
 ```
 
