@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.4 - 2026-02-14
+
+### Changed
+- Expanded README footer to include:
+  - full MIT usage notes
+  - Author section
+  - Acknowledgments section
+  - Version section with current release tag
+
 ## 1.1.3 - 2026-02-14
 
 ### Changed

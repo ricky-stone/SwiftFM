@@ -402,4 +402,22 @@ do {
 
 ## License
 
-MIT
+SwiftFM is licensed under the MIT License. See `LICENSE`.
+
+Industry standard for MIT:
+
+- You can use this in commercial/private/open-source projects.
+- Keep the copyright + license notice when redistributing.
+- Attribution is appreciated but not required by MIT.
+
+## Author
+
+Created and maintained by Ricky Stone.
+
+## Acknowledgments
+
+Thanks to everyone who tests, reports issues, and contributes improvements.
+
+## Version
+
+Current release tag: `1.1.4`
