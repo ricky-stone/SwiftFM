@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.3 - 2026-02-14
+
+### Changed
+- Reworked README structure to a fast-start style similar to SwiftRest:
+  - compact snippets first
+  - `do/catch` variants for key flows
+  - quick sections for advanced users
+- Added minimal SwiftUI streaming example (no animation) using `streamTextDeltas`.
+- Tightened core examples for beginner readability while keeping fast copy/paste paths.
+
 ## 1.1.2 - 2026-02-14
 
 ### Changed
