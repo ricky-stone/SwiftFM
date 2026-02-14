@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.8 - 2026-02-14
+
+### Changed
+- Removed playground examples from `Examples/` due unreliable execution UX.
+- Removed playground quick-start section from README.
+- Updated README version references to `1.1.8`.
+
 ## 1.1.7 - 2026-02-14
 
 ### Fixed
