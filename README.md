@@ -29,7 +29,7 @@ Fastest way to try SwiftFM:
 
 1. Clone this repo and open it in Xcode.
 2. Open `Examples/PromptLab.playground`.
-3. Run the `#Playground` block.
+3. Press Run in the playground.
 4. Read output in the console.
 
 Notes:

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.7 - 2026-02-14
+
+### Fixed
+- Updated `Examples/PromptLab.playground/Contents.swift` to use standard Xcode Playground execution:
+  - replaced `#Playground` macro usage
+  - now uses `PlaygroundSupport` + `Task` + `needsIndefiniteExecution`
+- Updated README quick-run step to say "Press Run in the playground".
+
 ## 1.1.6 - 2026-02-14
 
 ### Changed

@@ -1,6 +1,6 @@
 import SwiftFM
 import FoundationModels
-import Playgrounds
+import PlaygroundSupport
 
 struct MatchVision: Codable, Sendable {
     let home: String
@@ -19,7 +19,11 @@ struct MatchPrediction: Decodable, Sendable {
     let confidence: Double
 }
 
-#Playground {
+PlaygroundPage.current.needsIndefiniteExecution = true
+
+Task {
+    defer { PlaygroundPage.current.finishExecution() }
+
     guard SwiftFM.isModelAvailable else {
         print("Foundation model unavailable: \(SwiftFM.modelAvailability)")
         return
