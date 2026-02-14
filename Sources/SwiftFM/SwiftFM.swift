@@ -51,6 +51,14 @@ public actor SwiftFM {
         }
     }
 
+    /// Controls the shape of text emitted by streaming APIs.
+    public enum StreamMode: Sendable, Equatable {
+        /// Emit the full text generated so far on every update.
+        case snapshots
+        /// Emit only newly generated text on each update.
+        case deltas
+    }
+
     /// Shared defaults for this client.
     public struct Config: Sendable {
         public var system: String?
@@ -171,14 +179,8 @@ public actor SwiftFM {
         context: Context,
         request: RequestConfig = .init()
     ) async throws -> String {
-        let contextJSON = try Self.encodeContext(context)
         let contextualPrompt = Prompt(
-            """
-            \(prompt)
-
-            Context JSON:
-            \(contextJSON)
-            """
+            try Self.contextPrompt(basePrompt: prompt, context: context)
         )
         return try await generateText(prompt: contextualPrompt, request: request)
     }
@@ -214,13 +216,7 @@ public actor SwiftFM {
         as type: Output.Type,
         request: RequestConfig = .init()
     ) async throws -> Output {
-        let contextJSON = try Self.encodeContext(context)
-        let contextualPrompt = """
-        \(prompt)
-
-        Context JSON:
-        \(contextJSON)
-        """
+        let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
 
         return try await generateJSON(
             for: contextualPrompt,
@@ -231,7 +227,7 @@ public actor SwiftFM {
 
     /// Stream text as the model generates it.
     public func streamText(for prompt: String) -> AsyncThrowingStream<String, Error> {
-        streamText(for: prompt, request: .init())
+        streamText(for: prompt, request: .init(), mode: .snapshots)
     }
 
     /// Stream text with one-off request overrides.
@@ -239,12 +235,88 @@ public actor SwiftFM {
         for prompt: String,
         request: RequestConfig
     ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: prompt, request: request, mode: .snapshots)
+    }
+
+    /// Stream text with an explicit model for this request.
+    public func streamText(
+        for prompt: String,
+        using model: Model
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: prompt, request: .init(model: model), mode: .snapshots)
+    }
+
+    /// Stream text from prompt + context object.
+    ///
+    /// This is useful when your app has structured API data and you want
+    /// streamed language output without manually encoding context into the prompt.
+    public func streamText<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        do {
+            let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
+            return streamText(for: contextualPrompt, request: request, mode: .snapshots)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Stream text from prompt + context object using an explicit model.
+    public func streamText<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        using model: Model
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: prompt, context: context, request: .init(model: model))
+    }
+
+    /// Stream only newly-generated text chunks (delta updates).
+    ///
+    /// This is convenient for UI append workflows.
+    public func streamTextDeltas(for prompt: String) -> AsyncThrowingStream<String, Error> {
+        streamText(for: prompt, request: .init(), mode: .deltas)
+    }
+
+    /// Stream only newly-generated text chunks (delta updates) with request overrides.
+    public func streamTextDeltas(
+        for prompt: String,
+        request: RequestConfig
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: prompt, request: request, mode: .deltas)
+    }
+
+    /// Stream only newly-generated text chunks (delta updates) using prompt + context.
+    public func streamTextDeltas<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        do {
+            let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
+            return streamText(for: contextualPrompt, request: request, mode: .deltas)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    private func streamText(
+        for prompt: String,
+        request: RequestConfig,
+        mode: StreamMode
+    ) -> AsyncThrowingStream<String, Error> {
         let resolved = resolve(request)
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try Self.ensureModelAvailable(resolved.model)
+                    var lastSnapshot = ""
 
                     let stream = resolved.session.streamResponse(
                         to: prompt,
@@ -253,7 +325,22 @@ public actor SwiftFM {
 
                     for try await snapshot in stream {
                         if Task.isCancelled { break }
-                        continuation.yield(snapshot.content)
+
+                        switch mode {
+                        case .snapshots:
+                            continuation.yield(snapshot.content)
+                        case .deltas:
+                            let current = snapshot.content
+                            if current.hasPrefix(lastSnapshot) {
+                                let delta = String(current.dropFirst(lastSnapshot.count))
+                                if !delta.isEmpty {
+                                    continuation.yield(delta)
+                                }
+                            } else {
+                                continuation.yield(current)
+                            }
+                            lastSnapshot = current
+                        }
                     }
                     continuation.finish()
                 } catch {
@@ -345,6 +432,19 @@ public actor SwiftFM {
         }
 
         return json
+    }
+
+    private static func contextPrompt<Context: Encodable>(
+        basePrompt: String,
+        context: Context
+    ) throws -> String {
+        let contextJSON = try encodeContext(context)
+        return """
+        \(basePrompt)
+
+        Context JSON:
+        \(contextJSON)
+        """
     }
 
     private static func ensureModelAvailable(_ model: Model) throws {

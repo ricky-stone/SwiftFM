@@ -65,6 +65,21 @@ struct SwiftFMSnookerTests {
         }
     }
 
+    private func assertStreamNonEmptyOrGuardrail(
+        _ makeStreamText: () async throws -> String
+    ) async throws {
+        do {
+            let text = try await makeStreamText()
+            #expect(!text.isEmpty)
+        } catch let SwiftFM.SwiftFMError.generationFailed(underlying) {
+            if let generationError = underlying as? LanguageModelSession.GenerationError,
+               case .guardrailViolation(_) = generationError {
+                return
+            }
+            throw SwiftFM.SwiftFMError.generationFailed(underlying)
+        }
+    }
+
     @Test("Availability helper stays consistent")
     func availabilityHelpers() {
         #expect(SwiftFM.isAvailable(for: .default) == SwiftFM.isModelAvailable)
@@ -118,15 +133,72 @@ struct SwiftFMSnookerTests {
         guard SwiftFM.isModelAvailable else { return }
 
         let fm = SwiftFM()
-        var out = ""
-
-        for try await chunk in await fm.streamText(
-            for: "Explain snooker break-building basics in 3 to 4 sentences."
-        ) {
-            out = chunk
+        try await assertStreamNonEmptyOrGuardrail {
+            var out = ""
+            for try await chunk in await fm.streamText(
+                for: "Explain snooker break-building basics in 3 to 4 sentences."
+            ) {
+                out = chunk
+            }
+            return out
         }
+    }
 
-        #expect(!out.isEmpty)
+    @Test("Stream: explicit model helper")
+    func streamWithModelHelper() async throws {
+        guard SwiftFM.isAvailable(for: .general) else { return }
+
+        let fm = SwiftFM()
+        try await assertStreamNonEmptyOrGuardrail {
+            var out = ""
+            for try await chunk in await fm.streamText(
+                for: "Summarize one snooker safety principle in three lines.",
+                using: .general
+            ) {
+                out = chunk
+            }
+            return out
+        }
+    }
+
+    @Test("Stream: prompt + context model")
+    func streamWithContextModel() async throws {
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM()
+        let context = MatchContext(
+            player: "Ronnie O'Sullivan",
+            opponent: "Neil Robertson",
+            venue: "The Masters",
+            bestOfFrames: 11
+        )
+
+        try await assertStreamNonEmptyOrGuardrail {
+            var out = ""
+            for try await chunk in await fm.streamText(
+                for: "Explain how this match could unfold in three short paragraphs.",
+                context: context
+            ) {
+                out = chunk
+            }
+            return out
+        }
+    }
+
+    @Test("Stream: delta chunks")
+    func streamDeltas() async throws {
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM()
+        try await assertStreamNonEmptyOrGuardrail {
+            var combined = ""
+            for try await delta in await fm.streamTextDeltas(
+                for: "Explain one snooker break-building drill in 2 short paragraphs."
+            ) {
+                combined += delta
+            }
+            return combined
+        }
     }
 
     @Test("Guided: JSON response")

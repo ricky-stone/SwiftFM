@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.0 - 2026-02-14
+
+### Added
+- First-class streaming context APIs:
+  - `streamText(for:context:request:)`
+  - `streamText(for:context:using:)`
+- Streaming convenience APIs:
+  - `streamText(for:using:)`
+  - `streamTextDeltas(...)` helpers for append-style UI updates.
+- New `StreamMode` internally to support snapshot and delta streaming behavior.
+
+### Changed
+- Rewrote README with beginner-friendly full explanations for:
+  - temperature
+  - model selection (`.default`, `.general`, `.contentTagging`)
+  - sampling modes (`.automatic`, `.greedy`, `.randomTopK`, `.randomProbability`)
+  - content-tagging usage
+  - streaming with context examples.
+- Expanded tests to cover new streaming APIs.
+
 ## 1.0.0 - 2026-02-14
 
 ### Added

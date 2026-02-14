@@ -1,41 +1,40 @@
 # SwiftFM
 
-A tiny, beginner-friendly wrapper for Apple's Foundation Models.
+SwiftFM is a very small wrapper around Apple's Foundation Models.
 
-Use it like this:
+If you are new, the core idea is simple:
 
 ```swift
 let fm = SwiftFM()
-let text = try await fm.generateText(for: "Explain a century break in snooker.")
+let text = try await fm.generateText(for: "Explain this match in plain English.")
 ```
 
-That is the core idea: pass a prompt, get a `String`.
+You send a prompt, you get a string.
 
-## Why SwiftFM
+## What You Can Do
 
-- One-line text generation
-- Strongly typed JSON generation with `@Generable`
-- Easy prompt + context model input
-- Optional model selection per request
-- Optional tool calling
-- Streaming support
+- Generate plain text
+- Stream text as it is generated
+- Pass your own API model as context (`Codable`/`Encodable`)
+- Generate typed output with `@Generable`
+- Choose model behavior (`.default`, `.general`, `.contentTagging`)
+- Use tools to fetch live data during generation
+- Tune output with `temperature` and sampling modes
 
 ## Requirements
 
 - Xcode 26+
 - Swift 6.2+
-- iOS 26+, macOS 26+, or visionOS 26+
+- iOS 26+, macOS 26+, visionOS 26+
 - Apple Intelligence enabled on a supported device
 
 ## Install
 
-In Xcode:
+1. In Xcode, open `File` -> `Add Package Dependencies...`
+2. Enter `https://github.com/ricky-stone/SwiftFM`
+3. Choose version `1.1.0` or newer
 
-1. `File` -> `Add Package Dependencies...`
-2. Use: `https://github.com/ricky-stone/SwiftFM`
-3. Choose version `1.0.0` or newer
-
-## Quick Start (String in, String out)
+## 1. Quick Start
 
 ```swift
 import SwiftFM
@@ -45,7 +44,7 @@ let fm = SwiftFM()
 Task {
     do {
         let answer = try await fm.generateText(
-            for: "Explain how you think this match might go."
+            for: "Explain how this match might go in two short paragraphs."
         )
         print(answer)
     } catch {
@@ -54,9 +53,9 @@ Task {
 }
 ```
 
-## Pass Your API Model as Context
+## 2. Pass Your API Model as Context
 
-If your API already returns a Swift model, pass it directly.
+If your backend already returns a Swift model, pass it directly.
 
 ```swift
 import SwiftFM
@@ -82,11 +81,16 @@ Task {
         for: "Explain how this match might go in two short sentences.",
         context: match
     )
+
     print(summary)
 }
 ```
 
-## Choose a Model Per Request
+SwiftFM encodes `match` to JSON and injects it into the prompt for you.
+
+## 3. Stream Text
+
+### Full snapshots (replace UI text each update)
 
 ```swift
 import SwiftFM
@@ -94,22 +98,155 @@ import SwiftFM
 let fm = SwiftFM()
 
 Task {
-    let text = try await fm.generateText(
-        for: "Give one tactical snooker tip.",
-        using: .general
-    )
-    print(text)
+    for try await snapshot in await fm.streamText(
+        for: "Explain snooker safety play in 3 short paragraphs."
+    ) {
+        print(snapshot) // full text so far
+    }
 }
 ```
 
-Available choices:
+### Stream with context model
+
+```swift
+for try await snapshot in await fm.streamText(
+    for: "Explain how this specific match might unfold.",
+    context: match
+) {
+    print(snapshot)
+}
+```
+
+### Delta chunks (append-only UI workflow)
+
+```swift
+var text = ""
+for try await delta in await fm.streamTextDeltas(
+    for: "Give me a tactical preview of this match."
+) {
+    text += delta
+}
+```
+
+## 4. Model Types Explained (Simple)
+
+SwiftFM model choices:
 
 - `.default`
-- `.general`
-- `.contentTagging`
-- `.custom(SystemLanguageModel)`
+: Apple chooses the standard default system model.
 
-## Generate Typed Output (Guided Generation)
+- `.general`
+: General-purpose language tasks (chat, reasoning, writing, summaries).
+
+- `.contentTagging`
+: Better suited to labeling/classifying/tagging text into categories.
+
+- `.custom(SystemLanguageModel)`
+: Use your own configured `SystemLanguageModel`.
+
+### Which one should I use?
+
+- Most apps: start with `.default`
+- Assistant/chat/explanations: `.general`
+- Category labels/tags/intent buckets: `.contentTagging`
+
+### Content tagging example
+
+```swift
+import SwiftFM
+
+let fm = SwiftFM()
+
+let tagged = try await fm.generateText(
+    for: "Classify this note as one label: billing, support, sales, or bug. Note: App crashes at login.",
+    using: .contentTagging
+)
+
+print(tagged)
+```
+
+## 5. Temperature Explained (Very Important)
+
+`temperature` controls randomness.
+
+- Low (`0.0` to `0.3`)
+: More stable, more repeatable, less creative.
+
+- Medium (`0.4` to `0.8`)
+: Balanced.
+
+- High (`0.9+`)
+: More creative/varied, but less consistent.
+
+Good defaults:
+
+- Extraction / classification / strict outputs: `0.0` to `0.3`
+- General assistant text: `0.4` to `0.7`
+- Creative writing/brainstorming: `0.8`+
+
+Example:
+
+```swift
+let fm = SwiftFM(config: .init(temperature: 0.3))
+```
+
+## 6. Sampling Modes Explained (`.greedy` and others)
+
+Sampling controls how the next token is chosen.
+
+- `.automatic`
+: Let the system decide (good default).
+
+- `.greedy`
+: Always picks the highest-probability next token.
+  Very deterministic. Great for stable structured behavior.
+
+- `.randomTopK(k, seed:)`
+: Randomly chooses from the top `k` most likely next tokens.
+  Lower `k` is more focused; higher `k` is more diverse.
+
+- `.randomProbability(threshold, seed:)`
+: Randomly chooses from tokens whose cumulative probability is under a threshold (nucleus-style behavior).
+  Lower threshold is more conservative; higher threshold is more diverse.
+
+Examples:
+
+```swift
+let stable = SwiftFM(config: .init(sampling: .greedy, temperature: 0.1))
+let creative = SwiftFM(config: .init(sampling: .randomTopK(40), temperature: 0.9))
+let repeatable = SwiftFM(config: .init(sampling: .randomTopK(20, seed: 42), temperature: 0.6))
+```
+
+## 7. Per-Request Overrides
+
+You can keep one shared client and override behavior per call.
+
+```swift
+let fm = SwiftFM()
+
+let text = try await fm.generateText(
+    for: "Summarize this match in one sentence.",
+    request: .init(
+        model: .general,
+        temperature: 0.2,
+        maximumResponseTokens: 120,
+        sampling: .greedy
+    )
+)
+```
+
+Also works for stream requests:
+
+```swift
+for try await snapshot in await fm.streamText(
+    for: "Give me a 3 paragraph preview.",
+    request: .init(model: .general, temperature: 0.35)
+) {
+    print(snapshot)
+}
+```
+
+## 8. Typed Output (Guided Generation)
 
 ```swift
 import SwiftFM
@@ -126,150 +263,82 @@ struct MatchPrediction: Decodable, Sendable {
     @Guide(description: "Predicted winner")
     let predictedWinner: String
 
-    @Guide(description: "Confidence from 0.0 to 1.0")
+    @Guide(description: "Confidence 0.0 to 1.0")
     let confidence: Double
 }
 
 let fm = SwiftFM()
 
-Task {
-    let prediction: MatchPrediction = try await fm.generateJSON(
-        for: "Predict a snooker match and return {player,opponent,predictedWinner,confidence}.",
-        as: MatchPrediction.self
-    )
-
-    print(prediction.predictedWinner)
-}
-```
-
-You can also do typed output with context:
-
-```swift
 let prediction: MatchPrediction = try await fm.generateJSON(
-    for: "Predict this specific match using the context JSON.",
-    context: match,
+    for: "Predict a snooker match and return {player,opponent,predictedWinner,confidence}.",
     as: MatchPrediction.self
 )
 ```
 
-## Stream Text
+## 9. Tool Calling
 
-```swift
-import SwiftFM
-
-let fm = SwiftFM()
-
-Task {
-    do {
-        for try await snapshot in await fm.streamText(
-            for: "Explain snooker safety play in 3 short paragraphs."
-        ) {
-            print(snapshot)
-        }
-    } catch {
-        print(error)
-    }
-}
-```
-
-## Use Tools (Optional)
+Use tools when the model needs fresh data (API, database, etc.).
 
 ```swift
 import SwiftFM
 import FoundationModels
 
 @Generable
-struct PlayerFormArgs: Decodable, Sendable {
-    @Guide(description: "Player name")
-    let player: String
+struct MatchLookupArgs: Decodable, Sendable {
+    @Guide(description: "Match ID")
+    let matchID: String
 }
 
-struct PlayerFormTool: Tool {
-    let name = "player_form"
-    let description = "Returns recent form summary for a player."
+struct MatchLookupTool: Tool {
+    let name = "match_lookup"
+    let description = "Fetches match data by id"
 
-    func call(arguments: PlayerFormArgs) async throws -> String {
-        "\(arguments.player) has looked steady recently with strong long-potting."
+    func call(arguments: MatchLookupArgs) async throws -> String {
+        // Call your API and return JSON string
+        "{\"id\":\"\(arguments.matchID)\",\"home\":\"A\",\"away\":\"B\"}"
     }
 }
 
 let fm = SwiftFM()
+let tool = MatchLookupTool()
 
-Task {
-    let text = try await fm.generateText(
-        for: "Use the player_form tool for Judd Trump then give one short prediction.",
-        request: .init(tools: [PlayerFormTool()])
-    )
-
-    print(text)
-}
-```
-
-## Configure Defaults Once
-
-```swift
-import SwiftFM
-
-let fm = SwiftFM(
-    config: .init(
-        system: "You are a concise snooker analyst.",
-        model: .default,
-        temperature: 0.4,
-        maximumResponseTokens: 300,
-        sampling: .greedy
-    )
+let response = try await fm.generateText(
+    for: "Use match_lookup for id 123 and explain how the match may go.",
+    request: .init(tools: [tool])
 )
 ```
 
-## Per-Request Overrides
-
-Use `RequestConfig` when you need one-off behavior:
-
-```swift
-let text = try await fm.generateText(
-    for: "Summarize this match in one sentence.",
-    request: .init(
-        model: .general,
-        temperature: 0.2,
-        maximumResponseTokens: 120,
-        sampling: .randomTopK(20, seed: 42)
-    )
-)
-```
-
-## Availability Helpers
+## 10. Availability Helpers
 
 ```swift
 if SwiftFM.isModelAvailable {
-    print("Ready")
+    print("Model ready")
 } else {
-    print("Not ready: \(SwiftFM.modelAvailability)")
+    print("Unavailable: \(SwiftFM.modelAvailability)")
 }
+
+let taggingAvailable = SwiftFM.isAvailable(for: .contentTagging)
 ```
 
-For specific models:
+## 11. Session Helpers
 
 ```swift
-let available = SwiftFM.isAvailable(for: .contentTagging)
-let state = SwiftFM.availability(for: .contentTagging)
-```
+let fm = SwiftFM(config: .init(system: "You are a concise analyst."))
 
-## Session Helpers
-
-```swift
-await fm.prewarm(promptPrefix: "Snooker analysis")
-await fm.resetConversation()
+await fm.prewarm(promptPrefix: "Match analysis")
+let busy = await fm.isBusy
 let transcript = await fm.transcript
+await fm.resetConversation()
 ```
 
-## Error Type
+## 12. Errors
 
-SwiftFM throws `SwiftFM.SwiftFMError` for common cases:
+SwiftFM throws `SwiftFM.SwiftFMError` for common issues:
 
-- model unavailable
-- context JSON encoding failure
-- generation failure
-- tool call failure
+- `modelUnavailable`
+- `contextEncodingFailed`
+- `generationFailed`
+- `toolCallFailed`
 
 ## License
 
