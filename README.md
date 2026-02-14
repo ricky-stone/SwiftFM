@@ -1,5 +1,12 @@
 # SwiftFM
 
+[![Swift](https://img.shields.io/badge/Swift-6.2%2B-F05138?logo=swift&logoColor=white)](https://www.swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-iOS%2026%2B%20%7C%20macOS%2026%2B%20%7C%20visionOS%2026%2B-0A84FF)](https://developer.apple.com/documentation/foundationmodels)
+[![Release](https://img.shields.io/github/v/release/ricky-stone/SwiftFM?sort=semver)](https://github.com/ricky-stone/SwiftFM/releases)
+[![License](https://img.shields.io/github/license/ricky-stone/SwiftFM)](https://github.com/ricky-stone/SwiftFM/blob/main/LICENSE)
+[![Discussions](https://img.shields.io/github/discussions/ricky-stone/SwiftFM)](https://github.com/ricky-stone/SwiftFM/discussions)
+[![Stars](https://img.shields.io/github/stars/ricky-stone/SwiftFM?style=social)](https://github.com/ricky-stone/SwiftFM/stargazers)
+
 SwiftFM is a Swift 6 wrapper for Apple Foundation Models that keeps text generation simple.
 
 - `SwiftFM` is an `actor`
@@ -21,7 +28,7 @@ Use Swift Package Manager with:
 
 - `https://github.com/ricky-stone/SwiftFM.git`
 
-Use `1.1.8` or newer.
+Use `1.1.9` or newer.
 
 ## Fast Start
 
@@ -420,4 +427,4 @@ Thanks to everyone who tests, reports issues, and contributes improvements.
 
 ## Version
 
-Current release tag: `1.1.8`
+Current release tag: `1.1.9`

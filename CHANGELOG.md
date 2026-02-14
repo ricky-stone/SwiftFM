@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.9 - 2026-02-14
+
+### Changed
+- Added README badge row for:
+  - Swift version
+  - supported platforms
+  - latest release
+  - license
+  - discussions
+  - GitHub stars
+- Updated README version references to `1.1.9`.
+
 ## 1.1.8 - 2026-02-14
 
 ### Changed
