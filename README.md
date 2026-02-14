@@ -1,200 +1,276 @@
 # SwiftFM
 
-> **Super-simple API for Apple Foundation Models in Swift (iOS 26+, macOS 26+).**  
-> A lightweight façade designed for beginners: generate text or strongly-typed results in one line.
+A tiny, beginner-friendly wrapper for Apple's Foundation Models.
 
----
+Use it like this:
 
-## Features
+```swift
+let fm = SwiftFM()
+let text = try await fm.generateText(for: "Explain a century break in snooker.")
+```
 
-- ✅ **Plain text generation** — pass a prompt, get back a string.  
-- ✅ **Guided typed generation** — decode directly into your own `Decodable & Generable` structs.
-- ✅ **Streaming Text Generation** — get incremental text chunks as they’re produced 
-- ✅ **Beginner-friendly API** — minimal surface, sensible defaults.  
-- ✅ **On-device** — powered by Apple’s Foundation Models framework, no server required.  
-- ✅ **Future-proof** — extend with streaming, tools, and advanced options later.
+That is the core idea: pass a prompt, get a `String`.
 
----
+## Why SwiftFM
 
-## Availability
+- One-line text generation
+- Strongly typed JSON generation with `@Generable`
+- Easy prompt + context model input
+- Optional model selection per request
+- Optional tool calling
+- Streaming support
 
-SwiftFM requires the Apple Intelligence Foundation Models, which are only available on:
+## Requirements
 
-- iOS 26 or later  
-- iPadOS 26 or later  
-- macOS 26 or later  
+- Xcode 26+
+- Swift 6.2+
+- iOS 26+, macOS 26+, or visionOS 26+
+- Apple Intelligence enabled on a supported device
 
----
-### Swift 6 Readiness
+## Install
 
-SwiftFM is fully Swift 6 ready.
+In Xcode:
 
-- All types conform to `Sendable` where appropriate.  
-- Concurrency is handled safely with actor isolation.  
-- Package settings enable Strict Concurrency checking for maximum safety.  
----
+1. `File` -> `Add Package Dependencies...`
+2. Use: `https://github.com/ricky-stone/SwiftFM`
+3. Choose version `1.0.0` or newer
 
-## Installation
-
-Add **SwiftFM** to your project using Swift Package Manager:
-
-1. In Xcode: **File → Add Packages…**
-2. Enter the repository URL:  https://github.com/ricky-stone/SwiftFM
-3. Select **main branch** or a tagged version (e.g. `0.1.0`).
-
----
-
-## Usage
-
-### 1. Plain Text Generation
+## Quick Start (String in, String out)
 
 ```swift
 import SwiftFM
-
 
 let fm = SwiftFM()
 
 Task {
     do {
-        let response = try await fm.generateText(
-            for: "Explain a century break in snooker in one sentence."
+        let answer = try await fm.generateText(
+            for: "Explain how you think this match might go."
         )
-        print(response)
-        // "A century break is when a player scores 100 points or more in a single visit."
+        print(answer)
     } catch {
-        print("Error:", error)
+        print(error.localizedDescription)
     }
 }
 ```
 
-### 2. Strongly-Typed Guided Generation
+## Pass Your API Model as Context
 
-To use guided generation, your type must conform to Decodable & Sendable & Generable.
+If your API already returns a Swift model, pass it directly.
 
 ```swift
+import SwiftFM
+
+struct Match: Codable, Sendable {
+    let player: String
+    let opponent: String
+    let venue: String
+    let bestOfFrames: Int
+}
+
+let match = Match(
+    player: "Judd Trump",
+    opponent: "Mark Allen",
+    venue: "Alexandra Palace",
+    bestOfFrames: 11
+)
+
+let fm = SwiftFM()
+
+Task {
+    let summary = try await fm.generateText(
+        for: "Explain how this match might go in two short sentences.",
+        context: match
+    )
+    print(summary)
+}
+```
+
+## Choose a Model Per Request
+
+```swift
+import SwiftFM
+
+let fm = SwiftFM()
+
+Task {
+    let text = try await fm.generateText(
+        for: "Give one tactical snooker tip.",
+        using: .general
+    )
+    print(text)
+}
+```
+
+Available choices:
+
+- `.default`
+- `.general`
+- `.contentTagging`
+- `.custom(SystemLanguageModel)`
+
+## Generate Typed Output (Guided Generation)
+
+```swift
+import SwiftFM
+import FoundationModels
+
 @Generable
 struct MatchPrediction: Decodable, Sendable {
-    @Guide(description: "First player’s name")
+    @Guide(description: "First player")
     let player: String
 
-    @Guide(description: "Opponent’s name")
+    @Guide(description: "Opponent")
     let opponent: String
 
-    @Guide(description: "Who is predicted to win")
+    @Guide(description: "Predicted winner")
     let predictedWinner: String
 
-    @Guide(description: "Confidence 0.0–1.0")
+    @Guide(description: "Confidence from 0.0 to 1.0")
     let confidence: Double
 }
 
 let fm = SwiftFM()
 
 Task {
-    do {
-        let prediction: MatchPrediction = try await fm.generateJSON(
-            for: """
-            Imagine a snooker match.
-            Choose two well-known players and predict the winner.
-            Return {player, opponent, predictedWinner, confidence}.
-            """,
-            as: MatchPrediction.self
-        )
+    let prediction: MatchPrediction = try await fm.generateJSON(
+        for: "Predict a snooker match and return {player,opponent,predictedWinner,confidence}.",
+        as: MatchPrediction.self
+    )
 
-        print("Upcoming match: \(prediction.player) vs \(prediction.opponent)")
-        print("Predicted winner: \(prediction.predictedWinner) (\(Int(prediction.confidence * 100))%)")
-    } catch {
-        print("Error:", error)
-    }
+    print(prediction.predictedWinner)
 }
 ```
 
-### 3. Using a System Prompt
+You can also do typed output with context:
+
+```swift
+let prediction: MatchPrediction = try await fm.generateJSON(
+    for: "Predict this specific match using the context JSON.",
+    context: match,
+    as: MatchPrediction.self
+)
+```
+
+## Stream Text
 
 ```swift
 import SwiftFM
 
-// Configure SwiftFM with a system role
-let fm = SwiftFM(config: .init(system: "You are a professional snooker coach."))
-
-Task {
-    do {
-        let tip = try await fm.generateText(
-            for: "Give me a practice drill to improve cue ball control."
-        )
-        print(tip)
-        // e.g. "Set up three reds in a line and practice stopping the cue ball dead after each pot."
-    } catch {
-        print("Error:", error)
-    }
-}
-```
-
-### 4. Streaming Text Generation
-
-```swift
 let fm = SwiftFM()
 
 Task {
     do {
-        for try await chunk in await fm.streamText(for: "Explain the rules of snooker step by step.") {
-            print(chunk, terminator: "")
+        for try await snapshot in await fm.streamText(
+            for: "Explain snooker safety play in 3 short paragraphs."
+        ) {
+            print(snapshot)
         }
     } catch {
-        print("Stream failed:", error)
+        print(error)
     }
 }
 ```
 
-SwiftUI Example
+## Use Tools (Optional)
 
 ```swift
-@State private var text = ""
+import SwiftFM
+import FoundationModels
+
+@Generable
+struct PlayerFormArgs: Decodable, Sendable {
+    @Guide(description: "Player name")
+    let player: String
+}
+
+struct PlayerFormTool: Tool {
+    let name = "player_form"
+    let description = "Returns recent form summary for a player."
+
+    func call(arguments: PlayerFormArgs) async throws -> String {
+        "\(arguments.player) has looked steady recently with strong long-potting."
+    }
+}
+
+let fm = SwiftFM()
 
 Task {
-    do {
-        for try await chunk in await fm.streamText(for: "Explain the rules of snooker step by step.") {
-            text = chunk
-        }
-    } catch {
-        print("Stream failed:", error)
-    }
+    let text = try await fm.generateText(
+        for: "Use the player_form tool for Judd Trump then give one short prediction.",
+        request: .init(tools: [PlayerFormTool()])
+    )
+
+    print(text)
 }
 ```
 
-### Check availability at runtime:
+## Configure Defaults Once
+
+```swift
+import SwiftFM
+
+let fm = SwiftFM(
+    config: .init(
+        system: "You are a concise snooker analyst.",
+        model: .default,
+        temperature: 0.4,
+        maximumResponseTokens: 300,
+        sampling: .greedy
+    )
+)
+```
+
+## Per-Request Overrides
+
+Use `RequestConfig` when you need one-off behavior:
+
+```swift
+let text = try await fm.generateText(
+    for: "Summarize this match in one sentence.",
+    request: .init(
+        model: .general,
+        temperature: 0.2,
+        maximumResponseTokens: 120,
+        sampling: .randomTopK(20, seed: 42)
+    )
+)
+```
+
+## Availability Helpers
+
 ```swift
 if SwiftFM.isModelAvailable {
-    print("Foundation Model ready to use.")
+    print("Ready")
 } else {
-    print("Not available:", SwiftFM.modelAvailability)
+    print("Not ready: \(SwiftFM.modelAvailability)")
 }
 ```
 
-### Testing
+For specific models:
 
-SwiftFM includes Swift Testing style tests to ensure everything works as expected on devices where Foundation Models are available.
+```swift
+let available = SwiftFM.isAvailable(for: .contentTagging)
+let state = SwiftFM.availability(for: .contentTagging)
+```
 
-### License
+## Session Helpers
 
-SwiftFM is released under the MIT License.
+```swift
+await fm.prewarm(promptPrefix: "Snooker analysis")
+await fm.resetConversation()
+let transcript = await fm.transcript
+```
 
-This means:
-	•	You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software.
-	•	The only requirements are that you include the original license and copyright notice in copies or substantial portions of the software.
-	•	The software is provided “as is”, without warranty of any kind.
- 
-### Attribution
+## Error Type
 
-SwiftFM was created by Ricky Stone.  
-If you use or modify this library, please consider including a reference such as:  
-“Based on Ricky Stone’s SwiftFM.”
+SwiftFM throws `SwiftFM.SwiftFMError` for common cases:
 
-This is not a requirement of the MIT License, but an appreciated courtesy.
+- model unavailable
+- context JSON encoding failure
+- generation failure
+- tool call failure
 
+## License
 
-
-
-
-
-
-
+MIT
