@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.1.2 - 2026-02-14
+
+### Changed
+- Expanded README with an advanced `.custom(SystemLanguageModel)` guide.
+- Added beginner-friendly explanations for `SystemLanguageModel`:
+  - `useCase` options (`.general`, `.contentTagging`)
+  - `guardrails` options (`.default`, `.permissiveContentTransformations`)
+- Added concrete custom-model examples and availability-check snippet.
+
 ## 1.1.1 - 2026-02-14
 
 ### Changed

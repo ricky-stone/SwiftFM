@@ -32,7 +32,7 @@ You send a prompt, you get a string.
 
 1. In Xcode, open `File` -> `Add Package Dependencies...`
 2. Enter `https://github.com/ricky-stone/SwiftFM`
-3. Choose version `1.1.1` or newer
+3. Choose version `1.1.2` or newer
 
 ## 1. Quick Start
 
@@ -163,6 +163,72 @@ let tagged = try await fm.generateText(
 )
 
 print(tagged)
+```
+
+### Advanced: `.custom(SystemLanguageModel)` explained
+
+Use `.custom(SystemLanguageModel)` when you need direct control over Apple model configuration.
+
+Most people should still use `.default` first.
+
+#### `useCase` options
+
+- `.general`
+: Best for normal assistant work such as answers, explanations, summaries, and reasoning.
+
+- `.contentTagging`
+: Best for short label/classification tasks such as intent tagging, category assignment, or content routing.
+
+#### `guardrails` options
+
+- `.default`
+: Standard safety and policy behavior. Recommended for most apps.
+
+- `.permissiveContentTransformations`
+: More permissive for transformation-style tasks (for example rewriting/translating user-provided content).  
+Use this only if you specifically need that behavior.
+
+#### Example: custom model with use case and guardrails
+
+```swift
+import SwiftFM
+import FoundationModels
+
+let custom = SystemLanguageModel(
+    useCase: .general,
+    guardrails: .default
+)
+
+let fm = SwiftFM(config: .init(model: .custom(custom)))
+
+let text = try await fm.generateText(for: "Summarize this match in two lines.")
+print(text)
+```
+
+#### Example: custom model focused on tagging
+
+```swift
+import SwiftFM
+import FoundationModels
+
+let taggingModel = SystemLanguageModel(
+    useCase: .contentTagging,
+    guardrails: .default
+)
+
+let fm = SwiftFM(config: .init(model: .custom(taggingModel)))
+
+let label = try await fm.generateText(
+    for: "Return one label only: injury-update, transfer-news, or match-result. Text: Late goal secures 2-1 win."
+)
+print(label)
+```
+
+#### Availability check for a custom model
+
+```swift
+let custom = SystemLanguageModel(useCase: .general, guardrails: .default)
+let isReady = SwiftFM.isAvailable(for: .custom(custom))
 ```
 
 ## 5. Temperature Explained (Very Important)
