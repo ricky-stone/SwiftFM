@@ -59,6 +59,241 @@ public actor SwiftFM {
         case deltas
     }
 
+    /// Structured prompt builder for better model instruction-following.
+    ///
+    /// Example:
+    /// ```swift
+    /// let spec = SwiftFM.PromptSpec(
+    ///     task: "Write a short match preview.",
+    ///     rules: [
+    ///         "Use plain text only",
+    ///         "Do not use markdown"
+    ///     ],
+    ///     outputRequirements: [
+    ///         "Exactly 3 short paragraphs"
+    ///     ],
+    ///     tone: "Professional and engaging"
+    /// )
+    /// ```
+    public struct PromptSpec: Sendable, Equatable {
+        public var task: String
+        public var rules: [String]
+        public var outputRequirements: [String]
+        public var tone: String?
+
+        public init(
+            task: String,
+            rules: [String] = [],
+            outputRequirements: [String] = [],
+            tone: String? = nil
+        ) {
+            self.task = task
+            self.rules = rules
+            self.outputRequirements = outputRequirements
+            self.tone = tone
+        }
+
+        public func render() -> String {
+            var sections: [String] = []
+            sections.append("Task:\n\(task)")
+
+            if !rules.isEmpty {
+                sections.append("Rules:\n\(Self.numberedList(rules))")
+            }
+
+            if !outputRequirements.isEmpty {
+                sections.append("Output Requirements:\n\(Self.numberedList(outputRequirements))")
+            }
+
+            if let tone, !tone.isEmpty {
+                sections.append("Tone:\n\(tone)")
+            }
+
+            return sections.joined(separator: "\n\n")
+        }
+
+        private static func numberedList(_ items: [String]) -> String {
+            items.enumerated().map { index, value in
+                "\(index + 1). \(value)"
+            }.joined(separator: "\n")
+        }
+    }
+
+    /// Controls how context models are embedded into prompt text.
+    public struct ContextOptions: Sendable, Equatable {
+        public enum JSONFormatting: Sendable, Equatable {
+            case prettyPrintedSorted
+            case compactSorted
+            case compact
+        }
+
+        public var heading: String
+        public var jsonFormatting: JSONFormatting
+
+        public init(
+            heading: String = "Context JSON",
+            jsonFormatting: JSONFormatting = .prettyPrintedSorted
+        ) {
+            self.heading = heading
+            self.jsonFormatting = jsonFormatting
+        }
+    }
+
+    /// Optional text cleanup and normalization after model output.
+    ///
+    /// This is useful for UI-ready output requirements such as:
+    /// - removing extra whitespace
+    /// - enforcing cleaner paragraph spacing
+    /// - rounding decimal numbers for human-readable output
+    public struct TextPostProcessing: Sendable, Equatable {
+        public var trimWhitespace: Bool
+        public var collapseSpacesAndTabs: Bool
+        public var maximumConsecutiveNewlines: Int?
+        public var roundFloatingPointNumbersTo: Int?
+
+        public init(
+            trimWhitespace: Bool = false,
+            collapseSpacesAndTabs: Bool = false,
+            maximumConsecutiveNewlines: Int? = nil,
+            roundFloatingPointNumbersTo: Int? = nil
+        ) {
+            self.trimWhitespace = trimWhitespace
+            self.collapseSpacesAndTabs = collapseSpacesAndTabs
+
+            if let maximumConsecutiveNewlines {
+                self.maximumConsecutiveNewlines = max(1, maximumConsecutiveNewlines)
+            } else {
+                self.maximumConsecutiveNewlines = nil
+            }
+
+            if let roundFloatingPointNumbersTo {
+                self.roundFloatingPointNumbersTo = max(0, roundFloatingPointNumbersTo)
+            } else {
+                self.roundFloatingPointNumbersTo = nil
+            }
+        }
+
+        public static var none: Self { .init() }
+
+        /// Good default for UI text.
+        public static var readableParagraphs: Self {
+            .init(
+                trimWhitespace: true,
+                collapseSpacesAndTabs: true,
+                maximumConsecutiveNewlines: 2
+            )
+        }
+
+        /// Round all decimal numbers in text to a fixed number of decimal places.
+        /// `0` means whole numbers.
+        public static func roundedNumbers(_ places: Int = 0) -> Self {
+            .init(roundFloatingPointNumbersTo: places)
+        }
+
+        public func apply(to text: String) -> String {
+            guard isEnabled else { return text }
+
+            var result = text
+
+            if let places = roundFloatingPointNumbersTo {
+                result = Self.roundFloatingPointNumbers(in: result, places: places)
+            }
+
+            if collapseSpacesAndTabs {
+                result = Self.regexReplacing(
+                    pattern: #"[ \t]{2,}"#,
+                    with: " ",
+                    in: result
+                )
+            }
+
+            if let maximumConsecutiveNewlines {
+                let pattern = "\n{\(maximumConsecutiveNewlines + 1),}"
+                let replacement = String(repeating: "\n", count: maximumConsecutiveNewlines)
+                result = Self.regexReplacing(
+                    pattern: pattern,
+                    with: replacement,
+                    in: result
+                )
+            }
+
+            if trimWhitespace {
+                result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            return result
+        }
+
+        fileprivate var isEnabled: Bool {
+            trimWhitespace
+                || collapseSpacesAndTabs
+                || maximumConsecutiveNewlines != nil
+                || roundFloatingPointNumbersTo != nil
+        }
+
+        private static func roundFloatingPointNumbers(
+            in text: String,
+            places: Int
+        ) -> String {
+            let pattern = #"-?\d+\.\d+(?!\.\d)"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                return text
+            }
+
+            let mutable = NSMutableString(string: text)
+            let nsText = text as NSString
+            let matches = regex.matches(
+                in: text,
+                range: NSRange(location: 0, length: nsText.length)
+            )
+
+            for match in matches.reversed() {
+                let token = nsText.substring(with: match.range)
+                guard let value = Double(token) else { continue }
+
+                let rounded = roundedValue(value, places: places)
+                let replacement: String
+
+                if places == 0 {
+                    replacement = String(Int(rounded))
+                } else {
+                    replacement = String(format: "%.\(places)f", rounded)
+                }
+
+                mutable.replaceCharacters(in: match.range, with: replacement)
+            }
+
+            return mutable as String
+        }
+
+        private static func roundedValue(_ value: Double, places: Int) -> Double {
+            guard places > 0 else {
+                return value.rounded()
+            }
+
+            let divisor = pow(10.0, Double(places))
+            return (value * divisor).rounded() / divisor
+        }
+
+        private static func regexReplacing(
+            pattern: String,
+            with template: String,
+            in text: String
+        ) -> String {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                return text
+            }
+
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return regex.stringByReplacingMatches(
+                in: text,
+                options: [],
+                range: range,
+                withTemplate: template
+            )
+        }
+    }
+
     /// Shared defaults for this client.
     public struct Config: Sendable {
         public var system: String?
@@ -67,6 +302,8 @@ public actor SwiftFM {
         public var temperature: Double?
         public var maximumResponseTokens: Int?
         public var sampling: Sampling
+        public var contextOptions: ContextOptions
+        public var postProcessing: TextPostProcessing
 
         public init(
             system: String? = nil,
@@ -74,7 +311,9 @@ public actor SwiftFM {
             tools: [any Tool] = [],
             temperature: Double? = 0.6,
             maximumResponseTokens: Int? = nil,
-            sampling: Sampling = .automatic
+            sampling: Sampling = .automatic,
+            contextOptions: ContextOptions = .init(),
+            postProcessing: TextPostProcessing = .none
         ) {
             self.system = system
             self.model = model
@@ -82,6 +321,8 @@ public actor SwiftFM {
             self.temperature = temperature
             self.maximumResponseTokens = maximumResponseTokens
             self.sampling = sampling
+            self.contextOptions = contextOptions
+            self.postProcessing = postProcessing
         }
     }
 
@@ -93,6 +334,8 @@ public actor SwiftFM {
         public var maximumResponseTokens: Int?
         public var sampling: Sampling?
         public var includeSchemaInPrompt: Bool
+        public var contextOptions: ContextOptions?
+        public var postProcessing: TextPostProcessing?
 
         public init(
             model: Model? = nil,
@@ -100,7 +343,9 @@ public actor SwiftFM {
             temperature: Double? = nil,
             maximumResponseTokens: Int? = nil,
             sampling: Sampling? = nil,
-            includeSchemaInPrompt: Bool = true
+            includeSchemaInPrompt: Bool = true,
+            contextOptions: ContextOptions? = nil,
+            postProcessing: TextPostProcessing? = nil
         ) {
             self.model = model
             self.tools = tools
@@ -108,6 +353,8 @@ public actor SwiftFM {
             self.maximumResponseTokens = maximumResponseTokens
             self.sampling = sampling
             self.includeSchemaInPrompt = includeSchemaInPrompt
+            self.contextOptions = contextOptions
+            self.postProcessing = postProcessing
         }
     }
 
@@ -150,6 +397,14 @@ public actor SwiftFM {
         try await generateText(for: prompt, request: .init())
     }
 
+    /// Generate plain text from a structured prompt spec.
+    public func generateText(
+        from spec: PromptSpec,
+        request: RequestConfig = .init()
+    ) async throws -> String {
+        try await generateText(for: spec.render(), request: request)
+    }
+
     /// Generate plain text from a prompt with one-off overrides.
     public func generateText(
         for prompt: String,
@@ -180,9 +435,18 @@ public actor SwiftFM {
         request: RequestConfig = .init()
     ) async throws -> String {
         let contextualPrompt = Prompt(
-            try Self.contextPrompt(basePrompt: prompt, context: context)
+            try contextPrompt(basePrompt: prompt, context: context, request: request)
         )
         return try await generateText(prompt: contextualPrompt, request: request)
+    }
+
+    /// Generate text from a structured prompt spec plus context model.
+    public func generateText<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        request: RequestConfig = .init()
+    ) async throws -> String {
+        try await generateText(for: spec.render(), context: context, request: request)
     }
 
     /// Generate a strongly-typed result using guided generation.
@@ -209,6 +473,15 @@ public actor SwiftFM {
         }
     }
 
+    /// Generate strongly-typed output from a structured prompt spec.
+    public func generateJSON<T: Decodable & Sendable & Generable>(
+        from spec: PromptSpec,
+        as type: T.Type,
+        request: RequestConfig = .init()
+    ) async throws -> T {
+        try await generateJSON(for: spec.render(), as: type, request: request)
+    }
+
     /// Generate a strongly-typed result from prompt + context model.
     public func generateJSON<Output: Decodable & Sendable & Generable, Context: Encodable & Sendable>(
         for prompt: String,
@@ -216,7 +489,7 @@ public actor SwiftFM {
         as type: Output.Type,
         request: RequestConfig = .init()
     ) async throws -> Output {
-        let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
+        let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
 
         return try await generateJSON(
             for: contextualPrompt,
@@ -225,9 +498,32 @@ public actor SwiftFM {
         )
     }
 
+    /// Generate strongly-typed output from structured prompt spec plus context.
+    public func generateJSON<Output: Decodable & Sendable & Generable, Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        as type: Output.Type,
+        request: RequestConfig = .init()
+    ) async throws -> Output {
+        try await generateJSON(
+            for: spec.render(),
+            context: context,
+            as: type,
+            request: request
+        )
+    }
+
     /// Stream text as the model generates it.
     public func streamText(for prompt: String) -> AsyncThrowingStream<String, Error> {
         streamText(for: prompt, request: .init(), mode: .snapshots)
+    }
+
+    /// Stream text from a structured prompt spec.
+    public func streamText(
+        from spec: PromptSpec,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: spec.render(), request: request, mode: .snapshots)
     }
 
     /// Stream text with one-off request overrides.
@@ -256,13 +552,22 @@ public actor SwiftFM {
         request: RequestConfig = .init()
     ) -> AsyncThrowingStream<String, Error> {
         do {
-            let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
+            let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
             return streamText(for: contextualPrompt, request: request, mode: .snapshots)
         } catch {
             return AsyncThrowingStream { continuation in
                 continuation.finish(throwing: error)
             }
         }
+    }
+
+    /// Stream text from a structured prompt spec plus context.
+    public func streamText<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: spec.render(), context: context, request: request)
     }
 
     /// Stream text from prompt + context object using an explicit model.
@@ -281,6 +586,14 @@ public actor SwiftFM {
         streamText(for: prompt, request: .init(), mode: .deltas)
     }
 
+    /// Stream delta chunks from a structured prompt spec.
+    public func streamTextDeltas(
+        from spec: PromptSpec,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        streamText(for: spec.render(), request: request, mode: .deltas)
+    }
+
     /// Stream only newly-generated text chunks (delta updates) with request overrides.
     public func streamTextDeltas(
         for prompt: String,
@@ -296,13 +609,22 @@ public actor SwiftFM {
         request: RequestConfig = .init()
     ) -> AsyncThrowingStream<String, Error> {
         do {
-            let contextualPrompt = try Self.contextPrompt(basePrompt: prompt, context: context)
+            let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
             return streamText(for: contextualPrompt, request: request, mode: .deltas)
         } catch {
             return AsyncThrowingStream { continuation in
                 continuation.finish(throwing: error)
             }
         }
+    }
+
+    /// Stream delta chunks from a structured prompt spec plus context.
+    public func streamTextDeltas<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<String, Error> {
+        streamTextDeltas(for: spec.render(), context: context, request: request)
     }
 
     private func streamText(
@@ -325,12 +647,12 @@ public actor SwiftFM {
 
                     for try await snapshot in stream {
                         if Task.isCancelled { break }
+                        let current = resolved.postProcessing.apply(to: snapshot.content)
 
                         switch mode {
                         case .snapshots:
-                            continuation.yield(snapshot.content)
+                            continuation.yield(current)
                         case .deltas:
-                            let current = snapshot.content
                             if current.hasPrefix(lastSnapshot) {
                                 let delta = String(current.dropFirst(lastSnapshot.count))
                                 if !delta.isEmpty {
@@ -420,9 +742,23 @@ public actor SwiftFM {
         )
     }
 
-    private static func encodeContext<Context: Encodable>(_ context: Context) throws -> String {
+    private static func encodeContext<Context: Encodable>(
+        _ context: Context,
+        options: ContextOptions
+    ) throws -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var formatting: JSONEncoder.OutputFormatting = [.withoutEscapingSlashes]
+
+        switch options.jsonFormatting {
+        case .prettyPrintedSorted:
+            formatting.formUnion([.prettyPrinted, .sortedKeys])
+        case .compactSorted:
+            formatting.formUnion([.sortedKeys])
+        case .compact:
+            break
+        }
+
+        encoder.outputFormatting = formatting
 
         guard let json = try? String(
             data: encoder.encode(context),
@@ -434,15 +770,21 @@ public actor SwiftFM {
         return json
     }
 
-    private static func contextPrompt<Context: Encodable>(
+    private func contextPrompt<Context: Encodable>(
         basePrompt: String,
-        context: Context
+        context: Context,
+        request: RequestConfig
     ) throws -> String {
-        let contextJSON = try encodeContext(context)
+        let options = request.contextOptions ?? config.contextOptions
+        let contextJSON = try Self.encodeContext(context, options: options)
+        let heading = options.heading
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedHeading = heading.isEmpty ? "Context JSON" : heading
+
         return """
         \(basePrompt)
 
-        Context JSON:
+        \(resolvedHeading):
         \(contextJSON)
         """
     }
@@ -466,7 +808,7 @@ public actor SwiftFM {
                 to: prompt,
                 options: resolved.options
             )
-            return response.content
+            return resolved.postProcessing.apply(to: response.content)
         } catch let toolError as LanguageModelSession.ToolCallError {
             throw SwiftFMError.toolCallFailed(toolError)
         } catch {
@@ -481,9 +823,15 @@ public actor SwiftFM {
             maximumResponseTokens: request.maximumResponseTokens ?? config.maximumResponseTokens,
             sampling: request.sampling ?? config.sampling
         )
+        let postProcessing = request.postProcessing ?? config.postProcessing
 
         if request.model == nil && request.tools == nil {
-            return .init(model: model, options: options, session: session)
+            return .init(
+                model: model,
+                options: options,
+                session: session,
+                postProcessing: postProcessing
+            )
         }
 
         let oneShotSession = Self.makeSession(
@@ -492,7 +840,12 @@ public actor SwiftFM {
             instructions: config.system
         )
 
-        return .init(model: model, options: options, session: oneShotSession)
+        return .init(
+            model: model,
+            options: options,
+            session: oneShotSession,
+            postProcessing: postProcessing
+        )
     }
 
     private static func makeOptions(
@@ -521,5 +874,6 @@ public actor SwiftFM {
         let model: Model
         let options: GenerationOptions
         let session: LanguageModelSession
+        let postProcessing: TextPostProcessing
     }
 }

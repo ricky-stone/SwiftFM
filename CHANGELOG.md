@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.2.0 - 2026-02-18
+
+### Added
+- Structured prompt APIs:
+  - `SwiftFM.PromptSpec` for task + rules + output requirements + tone.
+  - `generateText(from:)`, `streamText(from:)`, `streamTextDeltas(from:)`.
+  - Prompt-spec overloads that also accept `context`.
+- Output post-processing APIs:
+  - `SwiftFM.TextPostProcessing` for whitespace cleanup, paragraph normalization, and decimal rounding.
+  - Config-level defaults and request-level overrides.
+- Context embedding controls:
+  - `SwiftFM.ContextOptions` with configurable heading and JSON formatting (`prettyPrintedSorted`, `compactSorted`, `compact`).
+- Public source version marker:
+  - `SwiftFMVersion.current == "1.2.0"`.
+
+### Changed
+- `Config` now supports:
+  - `contextOptions`
+  - `postProcessing`
+- `RequestConfig` now supports:
+  - `contextOptions`
+  - `postProcessing`
+- Text generation and streaming now apply optional post-processing before results are returned.
+- Context-based generation now uses configurable context embedding options.
+- README fully rewritten with beginner-first and power-user sections, plus Swift and SwiftUI examples.
+
+### Tests
+- Added tests for:
+  - prompt spec rendering
+  - text post-processing behavior
+  - version marker value
+
 ## 1.1.10 - 2026-02-14
 
 ### Fixed

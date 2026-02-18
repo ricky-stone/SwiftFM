@@ -85,6 +85,43 @@ struct SwiftFMSnookerTests {
         #expect(SwiftFM.isAvailable(for: .default) == SwiftFM.isModelAvailable)
     }
 
+    @Test("PromptSpec renders structured instruction blocks")
+    func promptSpecRendering() {
+        let spec = SwiftFM.PromptSpec(
+            task: "Summarize the upcoming match.",
+            rules: ["Use plain text only", "Do not use markdown"],
+            outputRequirements: ["Exactly 3 short paragraphs"],
+            tone: "Professional and engaging"
+        )
+
+        let rendered = spec.render()
+
+        #expect(rendered.contains("Task:\nSummarize the upcoming match."))
+        #expect(rendered.contains("Rules:\n1. Use plain text only\n2. Do not use markdown"))
+        #expect(rendered.contains("Output Requirements:\n1. Exactly 3 short paragraphs"))
+        #expect(rendered.contains("Tone:\nProfessional and engaging"))
+    }
+
+    @Test("Text post-processing formats paragraphs and rounds decimals")
+    func textPostProcessingFormatting() {
+        let postProcessing = SwiftFM.TextPostProcessing(
+            trimWhitespace: true,
+            collapseSpacesAndTabs: true,
+            maximumConsecutiveNewlines: 2,
+            roundFloatingPointNumbersTo: 0
+        )
+
+        let input = "  Rating 1718.58 vs 1600.49.\n\n\n\nRecent form:\t\tWWD  "
+        let output = postProcessing.apply(to: input)
+
+        #expect(output == "Rating 1719 vs 1600.\n\nRecent form: WWD")
+    }
+
+    @Test("Public version marker is current")
+    func versionMarker() {
+        #expect(SwiftFMVersion.current == "1.2.0")
+    }
+
     @Test("Text: prompt only")
     func textPromptOnly() async throws {
         guard SwiftFM.isModelAvailable else { return }
