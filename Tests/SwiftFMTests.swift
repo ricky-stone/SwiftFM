@@ -4,6 +4,22 @@ import FoundationModels
 
 struct SwiftFMSnookerTests {
 
+    private func isGeneral(_ model: SwiftFM.Model?) -> Bool {
+        guard let model else { return false }
+        if case .general = model {
+            return true
+        }
+        return false
+    }
+
+    private func isContentTagging(_ model: SwiftFM.Model?) -> Bool {
+        guard let model else { return false }
+        if case .contentTagging = model {
+            return true
+        }
+        return false
+    }
+
     struct MatchContext: Codable, Sendable {
         let player: String
         let opponent: String
@@ -102,6 +118,67 @@ struct SwiftFMSnookerTests {
         #expect(rendered.contains("Tone:\nProfessional and engaging"))
     }
 
+    @Test("Fluent builders support a SwiftUI-like beginner style")
+    func fluentBuilders() {
+        let spec = SwiftFM.prompt("Write a pre-match note.")
+            .rule("Use plain text only")
+            .rule("Keep it short")
+            .requirement("Exactly 2 sentences")
+            .tone("Friendly and clear")
+
+        let config = SwiftFM.configuration()
+            .system("You are a concise snooker helper.")
+            .model(.general)
+            .temperature(0.2)
+            .maximumResponseTokens(120)
+            .contextOptions(
+                .init()
+                    .heading("Match Payload")
+                    .jsonFormatting(.compactSorted)
+            )
+            .postProcessing(
+                .none
+                    .trimmingWhitespace()
+                    .collapsingSpacesAndTabs()
+            )
+
+        let request = SwiftFM.request()
+            .model(.contentTagging)
+            .tools([PlayerFormTool()])
+            .tool(PlayerFormTool())
+            .temperature(0.1)
+            .maximumResponseTokens(40)
+            .includeSchemaInPrompt(false)
+            .contextOptions(.init().heading("Compact Payload").jsonFormatting(.compact))
+            .postProcessing(.readableParagraphs)
+
+        let rendered = spec.render()
+
+        #expect(rendered.contains("Task:\nWrite a pre-match note."))
+        #expect(rendered.contains("1. Use plain text only"))
+        #expect(rendered.contains("2. Keep it short"))
+        #expect(rendered.contains("Exactly 2 sentences"))
+        #expect(rendered.contains("Tone:\nFriendly and clear"))
+
+        #expect(config.system == "You are a concise snooker helper.")
+        #expect(isGeneral(config.model))
+        #expect(config.temperature == 0.2)
+        #expect(config.maximumResponseTokens == 120)
+        #expect(config.contextOptions.heading == "Match Payload")
+        #expect(config.contextOptions.jsonFormatting == .compactSorted)
+        #expect(config.postProcessing.trimWhitespace)
+        #expect(config.postProcessing.collapseSpacesAndTabs)
+
+        #expect(isContentTagging(request.model))
+        #expect(request.tools?.count == 2)
+        #expect(request.temperature == 0.1)
+        #expect(request.maximumResponseTokens == 40)
+        #expect(request.includeSchemaInPrompt == false)
+        #expect(request.contextOptions?.heading == "Compact Payload")
+        #expect(request.contextOptions?.jsonFormatting == .compact)
+        #expect(request.postProcessing == .readableParagraphs)
+    }
+
     @Test("Text post-processing formats paragraphs and rounds decimals")
     func textPostProcessingFormatting() {
         let postProcessing = SwiftFM.TextPostProcessing(
@@ -119,7 +196,7 @@ struct SwiftFMSnookerTests {
 
     @Test("Public version marker is current")
     func versionMarker() {
-        #expect(SwiftFMVersion.current == "1.2.0")
+        #expect(SwiftFMVersion.current == "2.0.0")
     }
 
     @Test("Text: prompt only")
@@ -276,6 +353,39 @@ struct SwiftFMSnookerTests {
         #expect(!prediction.opponent.isEmpty)
     }
 
+    @Test("Guided: dynamic schema content")
+    func dynamicSchemaContent() async throws {
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM()
+        let schema = DynamicGenerationSchema(
+            name: "SnookerNote",
+            properties: [
+                .init(
+                    name: "title",
+                    description: "Short title",
+                    schema: .init(type: String.self)
+                ),
+                .init(
+                    name: "frameCount",
+                    description: "Frames in the match",
+                    schema: .init(type: Int.self, guides: [.range(1 ... 35)])
+                )
+            ]
+        )
+
+        let content = try await fm.generateContent(
+            for: "Generate a short snooker match note with a title and a likely frame count.",
+            dynamicSchema: schema
+        )
+
+        let title = try content.value(String.self, forProperty: "title")
+        let frameCount = try content.value(Int.self, forProperty: "frameCount")
+
+        #expect(!title.isEmpty)
+        #expect((1 ... 35).contains(frameCount))
+    }
+
     @Test("Tools: request-scoped tool calling")
     func toolCalling() async throws {
         guard SwiftFM.isModelAvailable else { return }
@@ -296,5 +406,27 @@ struct SwiftFMSnookerTests {
         await fm.resetConversation()
         let transcript = await fm.transcript
         #expect(transcript.count <= 1)
+    }
+
+    @Test("Session helpers: feedback attachment export")
+    func feedbackAttachment() async throws {
+        let fm = SwiftFM()
+        let attachment = await fm.feedbackAttachment(
+            sentiment: .positive,
+            issues: [.init(category: .unhelpful, explanation: "Needed a more direct answer.")],
+            desiredResponseText: "A short direct answer."
+        )
+
+        #expect(!attachment.isEmpty)
+    }
+
+    @Test("Helpers: token count estimates prompt size")
+    func tokenCountHelper() async throws {
+        guard #available(macOS 26.4, iOS 26.4, visionOS 26.4, *) else { return }
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM()
+        let count = try await fm.tokenCount(for: "Explain a snooker safety shot in one sentence.")
+        #expect(count > 0)
     }
 }

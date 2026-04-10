@@ -7,172 +7,189 @@
 [![Discussions](https://img.shields.io/github/discussions/ricky-stone/SwiftFM)](https://github.com/ricky-stone/SwiftFM/discussions)
 [![Stars](https://img.shields.io/github/stars/ricky-stone/SwiftFM?style=social)](https://github.com/ricky-stone/SwiftFM/stargazers)
 
-SwiftFM is a simple Swift wrapper around Apple Foundation Models.
+SwiftFM is a beginner-first Swift wrapper around Apple Foundation Models.
 
-It gives you clean APIs for:
+Version `2.0.0` keeps the original power-user features, but makes the package feel much more like SwiftUI:
 
-- plain text generation
-- streaming text (snapshots or deltas)
-- typed guided generation with `@Generable`
-- model selection (`.default`, `.general`, `.contentTagging`, `.custom`)
-- tool calls (live API-backed workflows)
-- context models (`Encodable`) without manual JSON string building
-- optional output cleanup (paragraph formatting, whitespace cleanup, rating rounding)
+- modifier-style config chains
+- modifier-style request chains
+- modifier-style prompt chains
+- dynamic schemas and structured streaming
+- locale helpers, token counting, and feedback attachment export
+- custom adapter helpers
+
+If you already use the older `Config(...)` and `RequestConfig(...)` style, it still works.
 
 ## Requirements
 
-- Swift 6.2+
-- Xcode 26+
-- iOS 26+
-- macOS 26+
-- visionOS 26+
+- Swift `6.2+`
+- Xcode `26+`
+- iOS `26+`
+- macOS `26+`
+- visionOS `26+`
 - Apple Intelligence enabled on supported hardware
 
 ## Installation
 
-Use Swift Package Manager with:
+Add the package with Swift Package Manager:
 
-- `https://github.com/ricky-stone/SwiftFM.git`
+```swift
+.package(url: "https://github.com/ricky-stone/SwiftFM.git", from: "2.0.0")
+```
 
-Use release `1.2.0` or newer.
-
-## Quick Start (Swift)
-
-### 1) One line
+## 30-Second Start
 
 ```swift
 import SwiftFM
 
 let fm = SwiftFM()
-let text = try await fm.generateText(for: "Explain what break-building means in snooker.")
+let text = try await fm.generateText(
+    for: "Explain a snooker century break in one sentence."
+)
+
 print(text)
 ```
 
-### 2) Beginner-safe `do/catch`
+## Beginner Style
+
+This is the new `2.0` feel.
+
+You start from `SwiftFM.configuration()`, `SwiftFM.request()`, or `SwiftFM.prompt(...)`, then chain small modifiers.
 
 ```swift
 import SwiftFM
 
-let fm = SwiftFM()
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .system("You are clear, friendly, and concise.")
+        .model(.general)
+        .temperature(0.3)
+        .maximumResponseTokens(180)
+        .postProcessing(.readableParagraphs)
+)
 
-do {
-    let text = try await fm.generateText(
-        for: "Explain what break-building means in snooker."
-    )
-    print(text)
-} catch {
-    print("Failed: \(error.localizedDescription)")
-}
+let text = try await fm.generateText(
+    for: "Write a short beginner explanation of snooker safety play."
+)
 ```
 
-## Pass Your API Model as Context
+## One-Off Request Overrides
 
-If your API already returns a model, pass it directly.
+Use `SwiftFM.request()` when you only want to change one call.
 
 ```swift
-import SwiftFM
+let text = try await fm.generateText(
+    for: "Write a short match preview.",
+    request: SwiftFM.request()
+        .temperature(0.2)
+        .maximumResponseTokens(120)
+        .postProcessing(.readableParagraphs)
+)
+```
 
+## Output Cleanup
+
+`TextPostProcessing` is still here, and now it chains nicely too.
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .postProcessing(
+            .none
+                .trimmingWhitespace()
+                .collapsingSpacesAndTabs()
+                .limitingConsecutiveNewlines(to: 2)
+                .roundingFloatingPointNumbers(to: 0)
+        )
+)
+```
+
+## Prompt Builder
+
+`PromptSpec` now chains cleanly too.
+
+```swift
+let spec = SwiftFM.prompt("Write a pre-match analysis.")
+    .rule("Use plain text only")
+    .rule("Do not use markdown")
+    .requirement("Exactly 3 short paragraphs")
+    .tone("Professional and engaging")
+
+let text = try await fm.generateText(from: spec)
+print(text)
+```
+
+## Context Models
+
+If your app already has Swift models, pass them directly.
+
+```swift
 struct MatchVision: Codable, Sendable {
     let home: String
     let away: String
-    let homeSeasonRating: Double
-    let awaySeasonRating: Double
     let venue: String
+    let bestOfFrames: Int
 }
 
 let vision = MatchVision(
-    home: "Player A",
-    away: "Player B",
-    homeSeasonRating: 1718.58,
-    awaySeasonRating: 1694.22,
-    venue: "Main Arena"
+    home: "Judd Trump",
+    away: "Mark Allen",
+    venue: "Alexandra Palace",
+    bestOfFrames: 11
 )
 
-let fm = SwiftFM()
-
-do {
-    let summary = try await fm.generateText(
-        for: "Write a short pre-match analysis using only this data.",
-        context: vision
-    )
-    print(summary)
-} catch {
-    print(error.localizedDescription)
-}
+let summary = try await fm.generateText(
+    for: "Write a short neutral preview using only this data.",
+    context: vision,
+    request: SwiftFM.request()
+        .postProcessing(.readableParagraphs)
+)
 ```
 
-## Streaming Text
+### Context Formatting
 
-### Snapshot stream (full text every update)
+You can still control how the JSON is embedded in the prompt.
 
 ```swift
-let fm = SwiftFM()
+let text = try await fm.generateText(
+    for: "Summarize this payload for a beginner.",
+    context: vision,
+    request: SwiftFM.request()
+        .contextOptions(
+            .init()
+                .heading("Match Payload")
+                .jsonFormatting(.compactSorted)
+        )
+)
+```
 
+## Text Streaming
+
+SwiftFM still supports both full snapshots and delta chunks.
+
+### Snapshot stream
+
+```swift
 for try await snapshot in await fm.streamText(
-    for: "Explain snooker safety play in 3 short paragraphs."
+    for: "Explain snooker break-building in three short paragraphs."
 ) {
     print(snapshot)
 }
 ```
 
-### Delta stream (append only)
+### Delta stream
 
 ```swift
-let fm = SwiftFM()
 var text = ""
 
 for try await delta in await fm.streamTextDeltas(
-    for: "Explain snooker safety play in 3 short paragraphs."
+    for: "Explain snooker break-building in three short paragraphs."
 ) {
     text += delta
 }
-
-print(text)
 ```
 
-### Stream with context model
-
-```swift
-for try await delta in await fm.streamTextDeltas(
-    for: "Write a short match preview.",
-    context: vision
-) {
-    print(delta, terminator: "")
-}
-```
-
-## SwiftUI Examples
-
-### Minimal: auto-generate once (no button)
-
-```swift
-import SwiftUI
-import SwiftFM
-
-struct HomeView: View {
-    @State private var text = "Loading..."
-    private let fm = SwiftFM()
-
-    var body: some View {
-        ScrollView {
-            Text(text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-        }
-        .task {
-            do {
-                text = try await fm.generateText(
-                    for: "Explain how tactical safety works in snooker."
-                )
-            } catch {
-                text = "Error: \(error.localizedDescription)"
-            }
-        }
-    }
-}
-```
-
-### Minimal streaming with `@State`
+## SwiftUI Example
 
 ```swift
 import SwiftUI
@@ -182,7 +199,11 @@ struct HomeView: View {
     @State private var text = ""
     @State private var isLoading = true
 
-    private let fm = SwiftFM()
+    private let fm = SwiftFM(
+        config: .beginnerFriendly
+            .system("You explain things simply.")
+            .temperature(0.3)
+    )
 
     var body: some View {
         ZStack {
@@ -199,7 +220,8 @@ struct HomeView: View {
         .task {
             do {
                 for try await delta in await fm.streamTextDeltas(
-                    for: "Give a 3 paragraph match preview."
+                    from: SwiftFM.prompt("Explain one snooker safety drill.")
+                        .requirement("Exactly 2 short paragraphs")
                 ) {
                     if isLoading { isLoading = false }
                     text += delta
@@ -221,205 +243,96 @@ import FoundationModels
 
 @Generable
 struct MatchPrediction: Decodable, Sendable {
-    @Guide(description: "Home player name")
+    @Guide(description: "Home player")
     let home: String
 
-    @Guide(description: "Away player name")
+    @Guide(description: "Away player")
     let away: String
 
     @Guide(description: "Predicted winner")
     let winner: String
 
-    @Guide(description: "Confidence value from 0.0 to 1.0")
+    @Guide(description: "Confidence from 0.0 to 1.0")
     let confidence: Double
 }
 
-let fm = SwiftFM()
+let prediction = try await fm.generateJSON(
+    for: "Predict this match and return home, away, winner, and confidence.",
+    as: MatchPrediction.self
+)
+```
 
-do {
-    let prediction = try await fm.generateJSON(
-        for: "Predict this match and return {home,away,winner,confidence}.",
-        as: MatchPrediction.self
-    )
-    print(prediction)
-} catch {
-    print(error.localizedDescription)
+### Structured Streaming
+
+New in `2.0`: you can stream partial typed snapshots, not just text.
+
+```swift
+for try await partial in await fm.streamJSON(
+    for: "Generate a snooker match prediction.",
+    as: MatchPrediction.self
+) {
+    print(partial.winner ?? "Waiting...")
 }
 ```
 
-## Structured Prompts (New)
+### Apple `26.4` Nil Handling
 
-Use `PromptSpec` when you want better instruction-following.
-
-```swift
-let spec = SwiftFM.PromptSpec(
-    task: "Write a pre-match analysis from the provided context data.",
-    rules: [
-        "Use plain text only",
-        "Do not use markdown",
-        "Mention ratings as whole numbers"
-    ],
-    outputRequirements: [
-        "Exactly 3 short paragraphs",
-        "Mention form as wins, losses, draws"
-    ],
-    tone: "Professional and engaging"
-)
-
-let fm = SwiftFM()
-let text = try await fm.generateText(from: spec, context: vision)
-print(text)
-```
-
-You can also stream from a prompt spec:
+If you want to use Apple's newer explicit-nil generation behavior, you can do that directly with Foundation Models and still use SwiftFM normally:
 
 ```swift
-for try await delta in await fm.streamTextDeltas(from: spec, context: vision) {
-    print(delta, terminator: "")
+@Generable(representNilExplicitlyInGeneratedContent: true)
+struct OptionalNote: Decodable, Sendable {
+    let title: String
+    let subtitle: String?
 }
 ```
 
-## Output Cleanup (New)
+## Dynamic Schemas
 
-`TextPostProcessing` lets you normalize the final text after generation.
-
-Common use cases:
-
-- remove extra whitespace
-- keep clean paragraph spacing
-- round decimals like `1718.58` to `1719`
+New in `2.0`: you can generate runtime-structured content without creating a Swift type first.
 
 ```swift
-let fm = SwiftFM(
-    config: .init(
-        postProcessing: .init(
-            trimWhitespace: true,
-            collapseSpacesAndTabs: true,
-            maximumConsecutiveNewlines: 2,
-            roundFloatingPointNumbersTo: 0
-        )
-    )
-)
-
-let text = try await fm.generateText(
-    for: "Summarize the match data for humans.",
-    context: vision
-)
-```
-
-Per-request override:
-
-```swift
-let text = try await fm.generateText(
-    for: "Summarize only this payload.",
-    context: vision,
-    request: .init(
-        postProcessing: .readableParagraphs
-    )
-)
-```
-
-## Context Embedding Options (New)
-
-Control how your `context` JSON is injected into the prompt.
-
-```swift
-let text = try await fm.generateText(
-    for: "Summarize this context.",
-    context: vision,
-    request: .init(
-        contextOptions: .init(
-            heading: "Match Payload",
-            jsonFormatting: .compactSorted
-        )
-    )
-)
-```
-
-`ContextOptions.JSONFormatting`:
-
-- `.prettyPrintedSorted`: easiest to read/debug
-- `.compactSorted`: compact JSON but stable key order
-- `.compact`: smallest JSON prompt footprint
-
-## Model Selection
-
-SwiftFM model options:
-
-- `.default`: system default model behavior
-- `.general`: general writing/assistant tasks
-- `.contentTagging`: classification and labeling tasks
-- `.custom(SystemLanguageModel)`: full Foundation Models control
-
-```swift
-let fm = SwiftFM()
-
-let summary = try await fm.generateText(
-    for: "Give one tactical snooker tip.",
-    using: .general
-)
-
-let label = try await fm.generateText(
-    for: "Return one label only: billing, support, bug. Text: app crashes at launch.",
-    using: .contentTagging
-)
-```
-
-## Custom `SystemLanguageModel` (Power Users)
-
-```swift
-import SwiftFM
 import FoundationModels
 
-let customModel = SystemLanguageModel(
-    useCase: .general,
-    guardrails: .default
+let schema = DynamicGenerationSchema(
+    name: "SnookerNote",
+    properties: [
+        .init(
+            name: "title",
+            description: "Short title",
+            schema: .init(type: String.self)
+        ),
+        .init(
+            name: "frameCount",
+            description: "Likely number of frames",
+            schema: .init(type: Int.self, guides: [.range(1 ... 35)])
+        )
+    ]
 )
 
-let fm = SwiftFM(config: .init(model: .custom(customModel)))
-let text = try await fm.generateText(for: "Summarize in 2 lines.")
-print(text)
+let content = try await fm.generateContent(
+    for: "Generate a snooker match note with a title and likely frame count.",
+    dynamicSchema: schema
+)
+
+let title = try content.value(String.self, forProperty: "title")
+let frames = try content.value(Int.self, forProperty: "frameCount")
 ```
 
-`useCase`:
-
-- `.general`: broad assistant and generation tasks
-- `.contentTagging`: label/classification focused behavior
-
-`guardrails`:
-
-- `.default`: recommended standard safety behavior
-- `.permissiveContentTransformations`: more permissive for transformation-heavy tasks
-
-## Temperature and Sampling
-
-`temperature` controls randomness:
-
-- `0.0` to `0.3`: most predictable
-- `0.4` to `0.8`: balanced
-- `0.9+`: more creative, less consistent
-
-Sampling options:
-
-- `.automatic`: system default sampling
-- `.greedy`: deterministic token choice (most stable)
-- `.randomTopK(k, seed:)`: random sample from top-k tokens
-- `.randomProbability(threshold, seed:)`: nucleus-style sampling by probability threshold
+### Dynamic Schema Streaming
 
 ```swift
-let fm = SwiftFM(
-    config: .init(
-        model: .general,
-        temperature: 0.2,
-        maximumResponseTokens: 250,
-        sampling: .greedy
-    )
-)
+for try await snapshot in await fm.streamContent(
+    for: "Generate a short structured match note.",
+    dynamicSchema: schema
+) {
+    print(snapshot.jsonString)
+}
 ```
 
-## Tool Calling (Live API Flows)
+## Tool Calling
 
-Use tools when the model should fetch live data.
+Use tools when the model should fetch live data or call app logic.
 
 ```swift
 import SwiftFM
@@ -436,38 +349,152 @@ struct MatchLookupTool: Tool {
     let description = "Fetches match JSON by id"
 
     func call(arguments: MatchLookupArgs) async throws -> String {
-        // Replace with your real API call
         """
         {"id":"\(arguments.id)","home":"Player A","away":"Player B","venue":"Main Arena"}
         """
     }
 }
 
-let fm = SwiftFM()
 let text = try await fm.generateText(
-    for: "Use match_lookup for id 123 then write a short neutral preview.",
-    request: .init(tools: [MatchLookupTool()])
+    for: "Use match_lookup for id 123, then write a short neutral preview.",
+    request: SwiftFM.request()
+        .tool(MatchLookupTool())
 )
-
-print(text)
 ```
 
-## Availability and Session Helpers
+## Sampling and Temperature
 
-### Availability
+If you want more control, the existing sampling features are still available.
 
 ```swift
-if SwiftFM.isModelAvailable {
-    print("Model ready")
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .model(.general)
+        .temperature(0.2)
+        .maximumResponseTokens(250)
+        .sampling(.greedy)
+)
+```
+
+## Model Selection
+
+SwiftFM model options:
+
+- `.default`
+- `.general`
+- `.contentTagging`
+- `.custom(SystemLanguageModel)`
+
+```swift
+let summary = try await fm.generateText(
+    for: "Give one tactical snooker tip.",
+    using: .general
+)
+
+let label = try await fm.generateText(
+    for: "Return one label only: billing, support, bug. Text: app crashes at launch.",
+    using: .contentTagging
+)
+```
+
+## Custom `SystemLanguageModel`
+
+If you want the raw Apple surface, that is still supported too.
+
+```swift
+import FoundationModels
+
+let customModel = SystemLanguageModel(
+    useCase: .general,
+    guardrails: .default
+)
+
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .model(.custom(customModel))
+)
+```
+
+## Custom Adapters
+
+New in `2.0`: adapter helpers make Apple adapter usage easier to discover.
+
+```swift
+let fm = SwiftFM(
+    config: .beginnerFriendly
+        .model(try .adapter(named: "MyAdapter"))
+)
+```
+
+You can also load an adapter from disk:
+
+```swift
+let model = try SwiftFM.Model.adapter(fileURL: adapterURL)
+let fm = SwiftFM(config: .init(model: model))
+```
+
+## Availability, Languages, and Locale
+
+```swift
+if SwiftFM.isModelAvailable && SwiftFM.supportsCurrentLocale() {
+    print("Ready")
 } else {
     print("Unavailable: \(SwiftFM.modelAvailability)")
 }
+
+let languages = SwiftFM.supportedLanguages(for: .default)
+print(languages)
 ```
 
-### Session lifecycle helpers
+## Token Counting (`26.4+`)
+
+Apple added token counting in `26.4`, and SwiftFM now exposes it.
 
 ```swift
-let fm = SwiftFM(config: .init(system: "You are concise."))
+if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
+    let count = try await fm.tokenCount(
+        from: SwiftFM.prompt("Explain a snooker safety shot.")
+            .requirement("One sentence only")
+    )
+
+    print("Prompt tokens:", count)
+}
+```
+
+There are also static helpers for tools, schemas, and transcript entries:
+
+```swift
+if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
+    let count = try await SwiftFM.tokenCount(for: schema)
+    print(count)
+}
+```
+
+## Feedback Attachments
+
+Apple recommends exporting feedback attachments when a response is poor or guardrails trigger unexpectedly.
+
+New in `2.0`: you can export that attachment directly from the current session.
+
+```swift
+let attachment = await fm.feedbackAttachment(
+    sentiment: .negative,
+    issues: [
+        .init(category: .didNotFollowInstructions, explanation: "It ignored the output format.")
+    ],
+    desiredResponseText: "A short plain-text answer in exactly two sentences."
+)
+
+print("Attachment bytes:", attachment.count)
+```
+
+## Session Helpers
+
+```swift
+let fm = SwiftFM(
+    config: .beginnerFriendly
+        .system("You are concise.")
+)
 
 await fm.prewarm(promptPrefix: "Match analysis")
 let busy = await fm.isBusy
@@ -477,45 +504,50 @@ await fm.resetConversation()
 
 What these do:
 
-- `prewarm(promptPrefix:)`: warms the model session to reduce first-response latency
-- `isBusy`: `true` while the current session is generating
-- `transcript`: current in-memory conversation history
-- `resetConversation()`: clears conversation state and starts fresh with same base config
+- `prewarm(promptPrefix:)`: reduce first-response latency
+- `isBusy`: `true` while the session is generating
+- `transcript`: inspect the current conversation history
+- `resetConversation()`: clear the session and start fresh with the same base config
 
-## Error Handling Pattern
+## Error Handling
 
 ```swift
-let fm = SwiftFM()
-
 do {
-    let text = try await fm.generateText(for: "Analyze this match")
+    let text = try await fm.generateText(for: "Analyze this match.")
     print(text)
 } catch let error as SwiftFM.SwiftFMError {
     print(error.localizedDescription)
+
+    if let generationError = error.generationError {
+        print("Foundation Models error:", generationError)
+    }
 } catch {
     print(error.localizedDescription)
 }
 ```
 
-## License
+## Existing APIs Still Work
 
-SwiftFM is licensed under the MIT License. See `LICENSE`.
+`2.0.0` adds fluent builder-style usage, but it does not remove the current feature set.
 
-Industry standard for MIT:
+These still work:
 
-- You can use this in commercial/private/open-source projects.
-- Keep the copyright + license notice when redistributing.
-- Attribution is appreciated but not required by MIT.
-
-## Author
-
-Created and maintained by Ricky Stone.
-
-## Acknowledgments
-
-Thanks to everyone who tests, reports issues, and contributes improvements.
+- `SwiftFM(config: .init(...))`
+- `RequestConfig(...)`
+- `PromptSpec(...)`
+- `generateText`
+- `streamText`
+- `streamTextDeltas`
+- `generateJSON`
+- request-scoped tools
+- context embedding options
+- post-processing options
+- custom `SystemLanguageModel`
 
 ## Version
 
-- Current release tag: `1.2.0`
-- Source marker: `SwiftFMVersion.current == "1.2.0"`
+- Current source version: `2.0.0`
+
+## License
+
+SwiftFM is licensed under the MIT License. See `LICENSE`.

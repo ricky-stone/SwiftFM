@@ -5,8 +5,15 @@ import FoundationModels
 ///
 /// Quick start:
 /// ```swift
-/// let fm = SwiftFM()
-/// let text = try await fm.generateText(for: "Explain a century break in snooker.")
+/// let fm = SwiftFM(
+///     config: SwiftFM.configuration()
+///         .system("You are clear and concise.")
+///         .postProcessing(.readableParagraphs)
+/// )
+///
+/// let text = try await fm.generateText(
+///     for: "Explain a century break in snooker."
+/// )
 /// ```
 public actor SwiftFM {
     /// The system model to use for a request.
@@ -27,6 +34,30 @@ public actor SwiftFM {
             case .custom(let model):
                 return model
             }
+        }
+
+        /// Build a model from a compiled Foundation Models adapter.
+        public static func adapter(
+            _ adapter: SystemLanguageModel.Adapter,
+            guardrails: SystemLanguageModel.Guardrails = .default
+        ) -> Self {
+            .custom(.init(adapter: adapter, guardrails: guardrails))
+        }
+
+        /// Load a Foundation Models adapter by name.
+        public static func adapter(
+            named name: String,
+            guardrails: SystemLanguageModel.Guardrails = .default
+        ) throws -> Self {
+            try .adapter(.init(name: name), guardrails: guardrails)
+        }
+
+        /// Load a Foundation Models adapter from disk.
+        public static func adapter(
+            fileURL: URL,
+            guardrails: SystemLanguageModel.Guardrails = .default
+        ) throws -> Self {
+            try .adapter(.init(fileURL: fileURL), guardrails: guardrails)
         }
     }
 
@@ -58,6 +89,15 @@ public actor SwiftFM {
         /// Emit only newly generated text on each update.
         case deltas
     }
+
+    /// Begin a beginner-friendly fluent config chain.
+    public static func configuration() -> Config { .init() }
+
+    /// Begin a beginner-friendly fluent request chain.
+    public static func request() -> RequestConfig { .init() }
+
+    /// Begin a beginner-friendly prompt chain.
+    public static func prompt(_ task: String) -> PromptSpec { .init(task: task) }
 
     /// Structured prompt builder for better model instruction-following.
     ///
@@ -117,6 +157,48 @@ public actor SwiftFM {
                 "\(index + 1). \(value)"
             }.joined(separator: "\n")
         }
+
+        /// Replace the task while keeping the rest of the prompt spec intact.
+        public func task(_ task: String) -> Self {
+            var copy = self
+            copy.task = task
+            return copy
+        }
+
+        /// Append a single rule in a SwiftUI-like modifier style.
+        public func rule(_ rule: String) -> Self {
+            var copy = self
+            copy.rules.append(rule)
+            return copy
+        }
+
+        /// Append multiple rules in a SwiftUI-like modifier style.
+        public func rules(_ rules: [String]) -> Self {
+            var copy = self
+            copy.rules.append(contentsOf: rules)
+            return copy
+        }
+
+        /// Append a single output requirement.
+        public func requirement(_ requirement: String) -> Self {
+            var copy = self
+            copy.outputRequirements.append(requirement)
+            return copy
+        }
+
+        /// Append multiple output requirements.
+        public func requirements(_ requirements: [String]) -> Self {
+            var copy = self
+            copy.outputRequirements.append(contentsOf: requirements)
+            return copy
+        }
+
+        /// Set or clear the preferred tone.
+        public func tone(_ tone: String?) -> Self {
+            var copy = self
+            copy.tone = tone
+            return copy
+        }
     }
 
     /// Controls how context models are embedded into prompt text.
@@ -136,6 +218,20 @@ public actor SwiftFM {
         ) {
             self.heading = heading
             self.jsonFormatting = jsonFormatting
+        }
+
+        /// Set the heading used above the embedded JSON context.
+        public func heading(_ heading: String) -> Self {
+            var copy = self
+            copy.heading = heading
+            return copy
+        }
+
+        /// Set the JSON formatting used for embedded context.
+        public func jsonFormatting(_ formatting: JSONFormatting) -> Self {
+            var copy = self
+            copy.jsonFormatting = formatting
+            return copy
         }
     }
 
@@ -188,6 +284,42 @@ public actor SwiftFM {
         /// `0` means whole numbers.
         public static func roundedNumbers(_ places: Int = 0) -> Self {
             .init(roundFloatingPointNumbersTo: places)
+        }
+
+        /// Enable or disable outer whitespace trimming.
+        public func trimmingWhitespace(_ enabled: Bool = true) -> Self {
+            var copy = self
+            copy.trimWhitespace = enabled
+            return copy
+        }
+
+        /// Enable or disable collapsing repeated spaces and tabs.
+        public func collapsingSpacesAndTabs(_ enabled: Bool = true) -> Self {
+            var copy = self
+            copy.collapseSpacesAndTabs = enabled
+            return copy
+        }
+
+        /// Limit the number of consecutive blank lines in the final text.
+        public func limitingConsecutiveNewlines(to count: Int?) -> Self {
+            var copy = self
+            if let count {
+                copy.maximumConsecutiveNewlines = max(1, count)
+            } else {
+                copy.maximumConsecutiveNewlines = nil
+            }
+            return copy
+        }
+
+        /// Round decimal numbers found in the output text.
+        public func roundingFloatingPointNumbers(to places: Int?) -> Self {
+            var copy = self
+            if let places {
+                copy.roundFloatingPointNumbersTo = max(0, places)
+            } else {
+                copy.roundFloatingPointNumbersTo = nil
+            }
+            return copy
         }
 
         public func apply(to text: String) -> String {
@@ -324,6 +456,74 @@ public actor SwiftFM {
             self.contextOptions = contextOptions
             self.postProcessing = postProcessing
         }
+
+        /// A beginner-friendly preset that keeps outputs tidy for UI work.
+        public static var beginnerFriendly: Self {
+            .init(postProcessing: .readableParagraphs)
+        }
+
+        /// Set or clear system instructions.
+        public func system(_ system: String?) -> Self {
+            var copy = self
+            copy.system = system
+            return copy
+        }
+
+        /// Set the default model for the client.
+        public func model(_ model: Model) -> Self {
+            var copy = self
+            copy.model = model
+            return copy
+        }
+
+        /// Replace the client tools.
+        public func tools(_ tools: [any Tool]) -> Self {
+            var copy = self
+            copy.tools = tools
+            return copy
+        }
+
+        /// Append a single tool to the client configuration.
+        public func tool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.tools.append(tool)
+            return copy
+        }
+
+        /// Set temperature.
+        public func temperature(_ temperature: Double?) -> Self {
+            var copy = self
+            copy.temperature = temperature
+            return copy
+        }
+
+        /// Set a response token limit.
+        public func maximumResponseTokens(_ maximumResponseTokens: Int?) -> Self {
+            var copy = self
+            copy.maximumResponseTokens = maximumResponseTokens
+            return copy
+        }
+
+        /// Set the sampling strategy.
+        public func sampling(_ sampling: Sampling) -> Self {
+            var copy = self
+            copy.sampling = sampling
+            return copy
+        }
+
+        /// Replace context embedding options.
+        public func contextOptions(_ contextOptions: ContextOptions) -> Self {
+            var copy = self
+            copy.contextOptions = contextOptions
+            return copy
+        }
+
+        /// Replace text post-processing options.
+        public func postProcessing(_ postProcessing: TextPostProcessing) -> Self {
+            var copy = self
+            copy.postProcessing = postProcessing
+            return copy
+        }
     }
 
     /// One-off overrides for a single request.
@@ -356,6 +556,74 @@ public actor SwiftFM {
             self.contextOptions = contextOptions
             self.postProcessing = postProcessing
         }
+
+        /// A beginner-friendly request preset that keeps text outputs tidy.
+        public static var beginnerFriendly: Self {
+            .init(postProcessing: .readableParagraphs)
+        }
+
+        /// Override the model for this request.
+        public func model(_ model: Model?) -> Self {
+            var copy = self
+            copy.model = model
+            return copy
+        }
+
+        /// Replace the request-scoped tools.
+        public func tools(_ tools: [any Tool]?) -> Self {
+            var copy = self
+            copy.tools = tools
+            return copy
+        }
+
+        /// Append a request-scoped tool.
+        public func tool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.tools = (copy.tools ?? []) + [tool]
+            return copy
+        }
+
+        /// Override temperature for this request.
+        public func temperature(_ temperature: Double?) -> Self {
+            var copy = self
+            copy.temperature = temperature
+            return copy
+        }
+
+        /// Override the response token limit for this request.
+        public func maximumResponseTokens(_ maximumResponseTokens: Int?) -> Self {
+            var copy = self
+            copy.maximumResponseTokens = maximumResponseTokens
+            return copy
+        }
+
+        /// Override sampling for this request.
+        public func sampling(_ sampling: Sampling?) -> Self {
+            var copy = self
+            copy.sampling = sampling
+            return copy
+        }
+
+        /// Control whether Foundation Models injects the schema into the prompt.
+        public func includeSchemaInPrompt(_ includeSchemaInPrompt: Bool) -> Self {
+            var copy = self
+            copy.includeSchemaInPrompt = includeSchemaInPrompt
+            return copy
+        }
+
+        /// Override context embedding options.
+        public func contextOptions(_ contextOptions: ContextOptions?) -> Self {
+            var copy = self
+            copy.contextOptions = contextOptions
+            return copy
+        }
+
+        /// Override text post-processing options.
+        public func postProcessing(_ postProcessing: TextPostProcessing?) -> Self {
+            var copy = self
+            copy.postProcessing = postProcessing
+            return copy
+        }
     }
 
     /// Common errors surfaced by `SwiftFM`.
@@ -372,9 +640,55 @@ public actor SwiftFM {
             case .contextEncodingFailed:
                 return "Failed to encode context into JSON for the prompt."
             case .generationFailed(let error):
+                if let generationError = error as? LanguageModelSession.GenerationError {
+                    return Self.describe(generationError)
+                }
                 return "Model generation failed: \(error.localizedDescription)"
             case .toolCallFailed(let error):
                 return "Tool call failed for '\(error.tool.name)': \(error.localizedDescription)"
+            }
+        }
+
+        /// The underlying Foundation Models generation error when available.
+        public var generationError: LanguageModelSession.GenerationError? {
+            guard case .generationFailed(let error) = self else { return nil }
+            return error as? LanguageModelSession.GenerationError
+        }
+
+        /// The underlying error payload when available.
+        public var underlyingError: Error? {
+            switch self {
+            case .generationFailed(let error):
+                return error
+            case .toolCallFailed(let error):
+                return error
+            case .modelUnavailable, .contextEncodingFailed:
+                return nil
+            }
+        }
+
+        private static func describe(_ error: LanguageModelSession.GenerationError) -> String {
+            switch error {
+            case .exceededContextWindowSize:
+                return "The prompt and transcript are too large for the current model context window."
+            case .assetsUnavailable:
+                return "The selected Foundation Models assets are not currently available on this device."
+            case .guardrailViolation:
+                return "Safety guardrails were triggered by the prompt or generated response."
+            case .unsupportedGuide:
+                return "The request uses a generation guide that the current model does not support."
+            case .unsupportedLanguageOrLocale:
+                return "The current language or locale is not supported by the selected model."
+            case .decodingFailure:
+                return "The model response could not be decoded into the requested structure."
+            case .rateLimited:
+                return "The model is temporarily rate limited. Please try again."
+            case .concurrentRequests:
+                return "The current session is already handling another request."
+            case .refusal:
+                return "The model refused to answer this request."
+            @unknown default:
+                return "Model generation failed: \(error.localizedDescription)"
             }
         }
     }
@@ -509,6 +823,272 @@ public actor SwiftFM {
             for: spec.render(),
             context: context,
             as: type,
+            request: request
+        )
+    }
+
+    /// Generate runtime-structured content using a Foundation Models schema.
+    public func generateContent(
+        for prompt: String,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        try await generateContent(prompt: prompt, schema: schema, request: request)
+    }
+
+    /// Generate runtime-structured content from a prompt spec.
+    public func generateContent(
+        from spec: PromptSpec,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        try await generateContent(for: spec.render(), schema: schema, request: request)
+    }
+
+    /// Generate runtime-structured content from prompt + context.
+    public func generateContent<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+        return try await generateContent(for: contextualPrompt, schema: schema, request: request)
+    }
+
+    /// Generate runtime-structured content from prompt spec + context.
+    public func generateContent<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        try await generateContent(
+            for: spec.render(),
+            context: context,
+            schema: schema,
+            request: request
+        )
+    }
+
+    /// Generate runtime-structured content from a dynamic schema tree.
+    public func generateContent(
+        for prompt: String,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        let schema = try GenerationSchema(root: dynamicSchema, dependencies: dependencies)
+        return try await generateContent(for: prompt, schema: schema, request: request)
+    }
+
+    /// Generate runtime-structured content from a prompt spec and dynamic schema.
+    public func generateContent(
+        from spec: PromptSpec,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        try await generateContent(
+            for: spec.render(),
+            dynamicSchema: dynamicSchema,
+            dependencies: dependencies,
+            request: request
+        )
+    }
+
+    /// Generate runtime-structured content from prompt + context using a dynamic schema.
+    public func generateContent<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        let schema = try GenerationSchema(root: dynamicSchema, dependencies: dependencies)
+        return try await generateContent(
+            for: prompt,
+            context: context,
+            schema: schema,
+            request: request
+        )
+    }
+
+    /// Generate runtime-structured content from prompt spec + context using a dynamic schema.
+    public func generateContent<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) async throws -> GeneratedContent {
+        try await generateContent(
+            for: spec.render(),
+            context: context,
+            dynamicSchema: dynamicSchema,
+            dependencies: dependencies,
+            request: request
+        )
+    }
+
+    /// Stream guided generation snapshots for a typed `@Generable` model.
+    public func streamJSON<T: Decodable & Sendable & Generable>(
+        for prompt: String,
+        as type: T.Type,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<T.PartiallyGenerated, Error> where T.PartiallyGenerated: Sendable {
+        streamGenerated(for: prompt, as: type, request: request)
+    }
+
+    /// Stream guided generation snapshots from a prompt spec.
+    public func streamJSON<T: Decodable & Sendable & Generable>(
+        from spec: PromptSpec,
+        as type: T.Type,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<T.PartiallyGenerated, Error> where T.PartiallyGenerated: Sendable {
+        streamJSON(for: spec.render(), as: type, request: request)
+    }
+
+    /// Stream guided generation snapshots from prompt + context.
+    public func streamJSON<Output: Decodable & Sendable & Generable, Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        as type: Output.Type,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<Output.PartiallyGenerated, Error> where Output.PartiallyGenerated: Sendable {
+        do {
+            let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+            return streamJSON(for: contextualPrompt, as: type, request: request)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Stream guided generation snapshots from prompt spec + context.
+    public func streamJSON<Output: Decodable & Sendable & Generable, Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        as type: Output.Type,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<Output.PartiallyGenerated, Error> where Output.PartiallyGenerated: Sendable {
+        streamJSON(for: spec.render(), context: context, as: type, request: request)
+    }
+
+    /// Stream runtime-structured content snapshots for a Foundation Models schema.
+    public func streamContent(
+        for prompt: String,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        streamGeneratedContent(for: prompt, schema: schema, request: request)
+    }
+
+    /// Stream runtime-structured content snapshots from a prompt spec.
+    public func streamContent(
+        from spec: PromptSpec,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        streamContent(for: spec.render(), schema: schema, request: request)
+    }
+
+    /// Stream runtime-structured content snapshots from prompt + context.
+    public func streamContent<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        do {
+            let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+            return streamContent(for: contextualPrompt, schema: schema, request: request)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Stream runtime-structured content snapshots from prompt spec + context.
+    public func streamContent<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        schema: GenerationSchema,
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        streamContent(for: spec.render(), context: context, schema: schema, request: request)
+    }
+
+    /// Stream runtime-structured content snapshots from a dynamic schema tree.
+    public func streamContent(
+        for prompt: String,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        do {
+            let schema = try GenerationSchema(root: dynamicSchema, dependencies: dependencies)
+            return streamContent(for: prompt, schema: schema, request: request)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Stream runtime-structured content snapshots from a prompt spec and dynamic schema.
+    public func streamContent(
+        from spec: PromptSpec,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        streamContent(
+            for: spec.render(),
+            dynamicSchema: dynamicSchema,
+            dependencies: dependencies,
+            request: request
+        )
+    }
+
+    /// Stream runtime-structured content snapshots from prompt + context using a dynamic schema.
+    public func streamContent<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        do {
+            let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+            return streamContent(
+                for: contextualPrompt,
+                dynamicSchema: dynamicSchema,
+                dependencies: dependencies,
+                request: request
+            )
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// Stream runtime-structured content snapshots from prompt spec + context using a dynamic schema.
+    public func streamContent<Context: Encodable & Sendable>(
+        from spec: PromptSpec,
+        context: Context,
+        dynamicSchema: DynamicGenerationSchema,
+        dependencies: [DynamicGenerationSchema] = [],
+        request: RequestConfig = .init()
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        streamContent(
+            for: spec.render(),
+            context: context,
+            dynamicSchema: dynamicSchema,
+            dependencies: dependencies,
             request: request
         )
     }
@@ -685,6 +1265,48 @@ public actor SwiftFM {
         }
     }
 
+    /// Export a feedback attachment for the current session transcript.
+    @discardableResult
+    public func feedbackAttachment(
+        sentiment: LanguageModelFeedback.Sentiment? = nil,
+        issues: [LanguageModelFeedback.Issue] = [],
+        desiredOutput: Transcript.Entry? = nil
+    ) -> Data {
+        session.logFeedbackAttachment(
+            sentiment: sentiment,
+            issues: issues,
+            desiredOutput: desiredOutput
+        )
+    }
+
+    /// Export a feedback attachment with plain-text desired output.
+    @discardableResult
+    public func feedbackAttachment(
+        sentiment: LanguageModelFeedback.Sentiment? = nil,
+        issues: [LanguageModelFeedback.Issue] = [],
+        desiredResponseText: String?
+    ) -> Data {
+        session.logFeedbackAttachment(
+            sentiment: sentiment,
+            issues: issues,
+            desiredResponseText: desiredResponseText
+        )
+    }
+
+    /// Export a feedback attachment with structured desired output.
+    @discardableResult
+    public func feedbackAttachment(
+        sentiment: LanguageModelFeedback.Sentiment? = nil,
+        issues: [LanguageModelFeedback.Issue] = [],
+        desiredResponseContent: (any ConvertibleToGeneratedContent)?
+    ) -> Data {
+        session.logFeedbackAttachment(
+            sentiment: sentiment,
+            issues: issues,
+            desiredResponseContent: desiredResponseContent
+        )
+    }
+
     /// Reset the default session transcript and conversation state.
     public func resetConversation() {
         session = Self.makeSession(
@@ -699,6 +1321,36 @@ public actor SwiftFM {
 
     /// Indicates whether the default session is currently responding.
     public var isBusy: Bool { session.isResponding }
+
+    /// Estimate the token count for a plain-text prompt using the resolved request model.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public func tokenCount(
+        for prompt: String,
+        request: RequestConfig = .init()
+    ) async throws -> Int {
+        let model = resolve(request).model.resolvedModel
+        return try await model.tokenCount(for: Prompt(prompt))
+    }
+
+    /// Estimate the token count for a prompt spec.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public func tokenCount(
+        from spec: PromptSpec,
+        request: RequestConfig = .init()
+    ) async throws -> Int {
+        try await tokenCount(for: spec.render(), request: request)
+    }
+
+    /// Estimate the token count for a prompt that includes encoded context.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public func tokenCount<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        request: RequestConfig = .init()
+    ) async throws -> Int {
+        let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+        return try await tokenCount(for: contextualPrompt, request: request)
+    }
 
     /// True if the default system model is available on this device.
     public static var isModelAvailable: Bool {
@@ -718,6 +1370,60 @@ public actor SwiftFM {
     /// Detailed availability for a specific model.
     public static func availability(for model: Model = .default) -> SystemLanguageModel.Availability {
         model.resolvedModel.availability
+    }
+
+    /// Languages supported by a specific model.
+    public static func supportedLanguages(for model: Model = .default) -> Set<Locale.Language> {
+        model.resolvedModel.supportedLanguages
+    }
+
+    /// Whether a model supports a specific locale.
+    public static func supports(
+        locale: Locale = .current,
+        for model: Model = .default
+    ) -> Bool {
+        model.resolvedModel.supportsLocale(locale)
+    }
+
+    /// Whether a model supports the current locale.
+    public static func supportsCurrentLocale(for model: Model = .default) -> Bool {
+        supports(locale: .current, for: model)
+    }
+
+    /// Estimate the token count for a prompt using a specific model.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public static func tokenCount(
+        for prompt: String,
+        model: Model = .default
+    ) async throws -> Int {
+        try await model.resolvedModel.tokenCount(for: Prompt(prompt))
+    }
+
+    /// Estimate the token count for configured tools.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public static func tokenCount(
+        for tools: [any Tool],
+        model: Model = .default
+    ) async throws -> Int {
+        try await model.resolvedModel.tokenCount(for: tools)
+    }
+
+    /// Estimate the token count for a generation schema.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public static func tokenCount(
+        for schema: GenerationSchema,
+        model: Model = .default
+    ) async throws -> Int {
+        try await model.resolvedModel.tokenCount(for: schema)
+    }
+
+    /// Estimate the token count for transcript entries.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public static func tokenCount(
+        for transcriptEntries: [Transcript.Entry],
+        model: Model = .default
+    ) async throws -> Int {
+        try await model.resolvedModel.tokenCount(for: transcriptEntries)
     }
 
     private static func makeSession(
@@ -813,6 +1519,99 @@ public actor SwiftFM {
             throw SwiftFMError.toolCallFailed(toolError)
         } catch {
             throw SwiftFMError.generationFailed(error)
+        }
+    }
+
+    private func generateContent(
+        prompt: String,
+        schema: GenerationSchema,
+        request: RequestConfig
+    ) async throws -> GeneratedContent {
+        let resolved = resolve(request)
+        try Self.ensureModelAvailable(resolved.model)
+
+        do {
+            let response = try await resolved.session.respond(
+                to: prompt,
+                schema: schema,
+                includeSchemaInPrompt: request.includeSchemaInPrompt,
+                options: resolved.options
+            )
+            return response.content
+        } catch let toolError as LanguageModelSession.ToolCallError {
+            throw SwiftFMError.toolCallFailed(toolError)
+        } catch {
+            throw SwiftFMError.generationFailed(error)
+        }
+    }
+
+    private func streamGenerated<Content: Generable>(
+        for prompt: String,
+        as type: Content.Type,
+        request: RequestConfig
+    ) -> AsyncThrowingStream<Content.PartiallyGenerated, Error> where Content.PartiallyGenerated: Sendable {
+        let resolved = resolve(request)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try Self.ensureModelAvailable(resolved.model)
+                    let stream = resolved.session.streamResponse(
+                        to: prompt,
+                        generating: type,
+                        includeSchemaInPrompt: request.includeSchemaInPrompt,
+                        options: resolved.options
+                    )
+
+                    for try await snapshot in stream {
+                        if Task.isCancelled { break }
+                        continuation.yield(snapshot.content)
+                    }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private func streamGeneratedContent(
+        for prompt: String,
+        schema: GenerationSchema,
+        request: RequestConfig
+    ) -> AsyncThrowingStream<GeneratedContent, Error> {
+        let resolved = resolve(request)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try Self.ensureModelAvailable(resolved.model)
+                    let stream = resolved.session.streamResponse(
+                        to: prompt,
+                        schema: schema,
+                        includeSchemaInPrompt: request.includeSchemaInPrompt,
+                        options: resolved.options
+                    )
+
+                    for try await snapshot in stream {
+                        if Task.isCancelled { break }
+                        continuation.yield(snapshot.rawContent)
+                    }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 
