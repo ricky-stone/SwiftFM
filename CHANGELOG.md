@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.0 - 2026-04-10
+
+### Added
+- Beginner-first fluent builder APIs:
+  - `SwiftFM.configuration()`
+  - `SwiftFM.request()`
+  - `SwiftFM.prompt(_:)`
+  - chainable modifiers on `Config`, `RequestConfig`, `PromptSpec`, `ContextOptions`, and `TextPostProcessing`
+- Runtime structured generation APIs:
+  - `generateContent(...)` for `GenerationSchema`
+  - `generateContent(...)` for `DynamicGenerationSchema`
+  - `streamContent(...)` for schema-driven snapshots
+- Structured streaming for typed `@Generable` models:
+  - `streamJSON(...)` returning partial generated snapshots
+- New Apple Foundation Models helper coverage:
+  - `supportedLanguages(for:)`
+  - `supports(locale:for:)`
+  - `supportsCurrentLocale(for:)`
+  - `tokenCount(...)` helpers for prompts, tools, schemas, and transcript entries
+  - `feedbackAttachment(...)` export helpers
+- Custom adapter helpers on `SwiftFM.Model`:
+  - `.adapter(_:)`
+  - `.adapter(named:)`
+  - `.adapter(fileURL:)`
+
+### Changed
+- Improved `SwiftFMError.localizedDescription` for common `LanguageModelSession.GenerationError` cases.
+- Updated the public version marker to `2.0.0`.
+- Rewrote README around the new fluent SwiftUI-like style while keeping older usage patterns documented.
+
+### Tests
+- Added coverage for:
+  - fluent builder chains
+  - dynamic schema generation
+  - feedback attachment export
+  - token count helpers
+- Test suite now runs 19 tests.
+
 ## 1.2.0 - 2026-02-18
 
 ### Added
