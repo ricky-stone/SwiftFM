@@ -7,18 +7,20 @@
 [![Discussions](https://img.shields.io/github/discussions/ricky-stone/SwiftFM)](https://github.com/ricky-stone/SwiftFM/discussions)
 [![Stars](https://img.shields.io/github/stars/ricky-stone/SwiftFM?style=social)](https://github.com/ricky-stone/SwiftFM/stargazers)
 
-SwiftFM is a beginner-first Swift wrapper around Apple Foundation Models.
+SwiftFM is a small Swift package that makes Apple's Foundation Models easier to use.
 
-Version `2.0.0` keeps the original power-user features, but makes the package feel much more like SwiftUI:
+It gives you friendly Swift APIs for:
 
-- modifier-style config chains
-- modifier-style request chains
-- modifier-style prompt chains
-- dynamic schemas and structured streaming
-- locale helpers, token counting, and feedback attachment export
-- custom adapter helpers
+- asking the on-device model for text
+- getting typed structured output
+- calling your own tools
+- passing Swift models as context
+- choosing how session memory works
+- adding simple fallbacks
+- using small workflow helpers in real apps
+- binding model calls into SwiftUI with a tiny Observable runner
 
-If you already use the older `Config(...)` and `RequestConfig(...)` style, it still works.
+SwiftFM does not replace Foundation Models. It gives you a cleaner front door.
 
 ## Requirements
 
@@ -29,20 +31,67 @@ If you already use the older `Config(...)` and `RequestConfig(...)` style, it st
 - visionOS `26+`
 - Apple Intelligence enabled on supported hardware
 
-## Installation
+## Install
 
-Add the package with Swift Package Manager:
+Add SwiftFM with Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/ricky-stone/SwiftFM.git", from: "2.0.0")
+.package(url: "https://github.com/ricky-stone/SwiftFM.git", from: "3.0.0")
 ```
 
-## 30-Second Start
+Then import it:
+
+```swift
+import SwiftFM
+```
+
+If you use `@Generable`, tools, schemas, or guides directly, also import Foundation Models:
+
+```swift
+import FoundationModels
+```
+
+## The Big v3 Default
+
+SwiftFM `3.0.0` uses a fresh Foundation Models session for each request by default.
+
+That means this:
+
+```swift
+let fm = SwiftFM()
+
+let first = try await fm.generateText(for: "Explain safety play.")
+let second = try await fm.generateText(for: "Explain break-building.")
+```
+
+works like two clean one-shot requests.
+
+The second request does not automatically remember the first request.
+
+This is intentional. Many apps are not chat apps. They ask one question, get one answer, and move on. Fresh sessions help keep context small and predictable.
+
+When you do want a conversation, opt in:
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .reusingSession()
+)
+```
+
+You can reset that shared session at any time:
+
+```swift
+await fm.clearSession()
+```
+
+## Smallest Example
 
 ```swift
 import SwiftFM
 
 let fm = SwiftFM()
+
 let text = try await fm.generateText(
     for: "Explain a snooker century break in one sentence."
 )
@@ -50,32 +99,26 @@ let text = try await fm.generateText(
 print(text)
 ```
 
-## Beginner Style
+That is enough for many apps.
 
-This is the new `2.0` feel.
+## Builder Style
 
-You start from `SwiftFM.configuration()`, `SwiftFM.request()`, or `SwiftFM.prompt(...)`, then chain small modifiers.
+SwiftFM uses small chainable builders.
+
+Read this like plain English:
 
 ```swift
-import SwiftFM
-
 let fm = SwiftFM(
     config: SwiftFM.configuration()
-        .system("You are clear, friendly, and concise.")
+        .system("You explain things clearly.")
         .model(.general)
         .temperature(0.3)
         .maximumResponseTokens(180)
         .postProcessing(.readableParagraphs)
 )
-
-let text = try await fm.generateText(
-    for: "Write a short beginner explanation of snooker safety play."
-)
 ```
 
-## One-Off Request Overrides
-
-Use `SwiftFM.request()` when you only want to change one call.
+You can also build one request:
 
 ```swift
 let text = try await fm.generateText(
@@ -83,55 +126,97 @@ let text = try await fm.generateText(
     request: SwiftFM.request()
         .temperature(0.2)
         .maximumResponseTokens(120)
-        .postProcessing(.readableParagraphs)
 )
 ```
 
-## Output Cleanup
+And you can build prompts:
 
-`TextPostProcessing` is still here, and now it chains nicely too.
+```swift
+let prompt = SwiftFM.prompt("Write a pre-match analysis.")
+    .rule("Use plain text only")
+    .rule("Do not use markdown")
+    .requirement("Exactly 3 short paragraphs")
+    .tone("Friendly and professional")
+
+let text = try await fm.generateText(from: prompt)
+```
+
+## Session Policy
+
+Session policy controls what happens to conversation context over time.
+
+### One-shot requests
+
+This is the default.
+
+```swift
+let fm = SwiftFM()
+
+let answer = try await fm.generateText(
+    for: "Summarize this screen for the user."
+)
+```
+
+Each call gets a clean Foundation Models session.
+
+You can also say it out loud:
 
 ```swift
 let fm = SwiftFM(
     config: SwiftFM.configuration()
-        .postProcessing(
-            .none
-                .trimmingWhitespace()
-                .collapsingSpacesAndTabs()
-                .limitingConsecutiveNewlines(to: 2)
-                .roundingFloatingPointNumbers(to: 0)
-        )
+        .freshSessionPerRequest()
 )
 ```
 
-## Prompt Builder
+### Conversation requests
 
-`PromptSpec` now chains cleanly too.
+Use this when each request should remember previous requests.
 
 ```swift
-let spec = SwiftFM.prompt("Write a pre-match analysis.")
-    .rule("Use plain text only")
-    .rule("Do not use markdown")
-    .requirement("Exactly 3 short paragraphs")
-    .tone("Professional and engaging")
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .reusingSession()
+        .system("You are a helpful tutor.")
+)
 
-let text = try await fm.generateText(from: spec)
-print(text)
+let first = try await fm.generateText(for: "Teach me one snooker rule.")
+let second = try await fm.generateText(for: "Give me a quiz question about that.")
 ```
 
-## Context Models
-
-If your app already has Swift models, pass them directly.
+Clear the conversation when you are done:
 
 ```swift
-struct MatchVision: Codable, Sendable {
+await fm.clearSession()
+```
+
+### Manual session control
+
+Use `manualSession()` when your app wants to be very explicit about when session context is cleared.
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .manualSession()
+)
+
+let answer = try await fm.generateText(for: "Start a coaching session.")
+
+await fm.clearSession()
+```
+
+## Passing Swift Models As Context
+
+If your app already has data in a Swift struct, pass it directly.
+
+```swift
+struct MatchContext: Codable, Sendable {
     let home: String
     let away: String
     let venue: String
     let bestOfFrames: Int
 }
 
-let vision = MatchVision(
+let context = MatchContext(
     home: "Judd Trump",
     away: "Mark Allen",
     venue: "Alexandra Palace",
@@ -140,102 +225,28 @@ let vision = MatchVision(
 
 let summary = try await fm.generateText(
     for: "Write a short neutral preview using only this data.",
-    context: vision,
-    request: SwiftFM.request()
-        .postProcessing(.readableParagraphs)
+    context: context
 )
 ```
 
-### Context Formatting
-
-You can still control how the JSON is embedded in the prompt.
+You can control how that context is embedded:
 
 ```swift
-let text = try await fm.generateText(
-    for: "Summarize this payload for a beginner.",
-    context: vision,
+let summary = try await fm.generateText(
+    for: "Summarize this match.",
+    context: context,
     request: SwiftFM.request()
         .contextOptions(
             .init()
-                .heading("Match Payload")
+                .heading("Match Data")
                 .jsonFormatting(.compactSorted)
         )
 )
 ```
 
-## Text Streaming
+## Structured Output
 
-SwiftFM still supports both full snapshots and delta chunks.
-
-### Snapshot stream
-
-```swift
-for try await snapshot in await fm.streamText(
-    for: "Explain snooker break-building in three short paragraphs."
-) {
-    print(snapshot)
-}
-```
-
-### Delta stream
-
-```swift
-var text = ""
-
-for try await delta in await fm.streamTextDeltas(
-    for: "Explain snooker break-building in three short paragraphs."
-) {
-    text += delta
-}
-```
-
-## SwiftUI Example
-
-```swift
-import SwiftUI
-import SwiftFM
-
-struct HomeView: View {
-    @State private var text = ""
-    @State private var isLoading = true
-
-    private let fm = SwiftFM(
-        config: .beginnerFriendly
-            .system("You explain things simply.")
-            .temperature(0.3)
-    )
-
-    var body: some View {
-        ZStack {
-            ScrollView {
-                Text(text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
-
-            if isLoading {
-                ProgressView("Thinking...")
-            }
-        }
-        .task {
-            do {
-                for try await delta in await fm.streamTextDeltas(
-                    from: SwiftFM.prompt("Explain one snooker safety drill.")
-                        .requirement("Exactly 2 short paragraphs")
-                ) {
-                    if isLoading { isLoading = false }
-                    text += delta
-                }
-            } catch {
-                isLoading = false
-                text = "Error: \(error.localizedDescription)"
-            }
-        }
-    }
-}
-```
-
-## Typed Output with `@Generable`
+Use `@Generable` when you want a Swift type back instead of plain text.
 
 ```swift
 import SwiftFM
@@ -243,59 +254,417 @@ import FoundationModels
 
 @Generable
 struct MatchPrediction: Decodable, Sendable {
-    @Guide(description: "Home player")
-    let home: String
-
-    @Guide(description: "Away player")
-    let away: String
-
     @Guide(description: "Predicted winner")
     let winner: String
 
     @Guide(description: "Confidence from 0.0 to 1.0")
     let confidence: Double
+
+    @Guide(description: "One short reason")
+    let reason: String
 }
 
 let prediction = try await fm.generateJSON(
-    for: "Predict this match and return home, away, winner, and confidence.",
+    for: "Predict the match winner.",
+    context: context,
     as: MatchPrediction.self
+)
+
+print(prediction.winner)
+```
+
+## Tool Calling
+
+Tools let the model ask your app for information.
+
+```swift
+import SwiftFM
+import FoundationModels
+
+@Generable
+struct PlayerLookupArguments: Decodable, Sendable {
+    @Guide(description: "Player name")
+    let name: String
+}
+
+struct PlayerLookupTool: Tool {
+    let name = "player_lookup"
+    let description = "Looks up a short player summary."
+
+    func call(arguments: PlayerLookupArguments) async throws -> String {
+        "Player summary for \(arguments.name): strong long potting, steady safety."
+    }
+}
+
+let text = try await fm.generateText(
+    for: "Use player_lookup for Judd Trump, then write one sentence.",
+    request: SwiftFM.request()
+        .tool(PlayerLookupTool())
 )
 ```
 
-### Structured Streaming
+## Tool Groups
 
-New in `2.0`: you can stream partial typed snapshots, not just text.
+As apps grow, passing the same tools again and again gets annoying.
+
+Use tool groups:
+
+```swift
+let searchTools = SwiftFM.toolGroup("search")
+    .tool(PlayerLookupTool())
+
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .toolGroup(searchTools)
+)
+```
+
+Or use a registry:
+
+```swift
+let registry = SwiftFM.toolRegistry()
+    .group(searchTools)
+    .group(
+        SwiftFM.toolGroup("player-data")
+            .tool(PlayerLookupTool())
+    )
+
+let text = try await fm.generateText(
+    for: "Use the right tool and answer clearly.",
+    request: SwiftFM.request()
+        .toolRegistry(registry)
+)
+```
+
+## Optional Tools
+
+Optional tools are normal tools, but SwiftFM can drop them during a fallback retry.
+
+```swift
+let text = try await fm.generateText(
+    for: "Search if needed, then summarize.",
+    request: SwiftFM.request()
+        .tool(PlayerLookupTool())
+        .optionalTool(PlayerLookupTool())
+        .retryWithoutOptionalTools()
+)
+```
+
+If a tool failure happens, SwiftFM retries once without the optional tools.
+
+## Fallbacks
+
+Foundation Models can fail for normal reasons:
+
+- Apple Intelligence is not ready
+- a guardrail was triggered
+- the context window is too large
+- a tool failed
+
+SwiftFM v3 gives you simple fallback policies.
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .fallbackText("I cannot answer that right now.")
+)
+
+let text = try await fm.generateText(
+    for: "Write a short answer."
+)
+```
+
+You can be more specific:
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .onGuardrailViolation(.fallbackText("I cannot help with that request."))
+        .onUnavailableModel(.fallbackText("Apple Intelligence is not ready on this device."))
+        .retryWithReducedContext()
+)
+```
+
+Fallbacks are conservative:
+
+- text fallback returns only for text generation
+- retries happen at most once
+- retry with reduced context means retrying with a fresh session
+- retry without optional tools removes only tools you marked optional
+
+## Lightweight Workflows
+
+A workflow is a small convenience layer for one clear app task.
+
+It can define:
+
+- instructions
+- tools
+- output type
+- request settings
+- fallback output
+- one `run` call
+
+```swift
+@Generable
+struct SupportReply: Decodable, Sendable {
+    @Guide(description: "Short reply to show in the UI")
+    let reply: String
+
+    @Guide(description: "Whether the issue needs a human")
+    let needsHuman: Bool
+}
+
+let workflow = SwiftFM.workflow(generating: SupportReply.self)
+    .instructions("Be brief, kind, and practical.")
+    .toolGroup(searchTools)
+    .request(
+        SwiftFM.request()
+            .freshSession()
+            .temperature(0.2)
+    )
+    .fallback(
+        SupportReply(
+            reply: "I cannot answer that right now. Please try again.",
+            needsHuman: true
+        )
+    )
+
+let reply = try await workflow.run(
+    "The user cannot find their saved match notes."
+)
+```
+
+Workflows are optional. You can ignore them and keep using `SwiftFM` directly.
+
+## Mixed Block Responses
+
+Many app UIs need ordered mixed content:
+
+- text
+- a reference to an app object
+- metadata
+- a custom block
+
+SwiftFM v3 includes generic block response types.
+
+```swift
+let response = try await fm.generateJSON(
+    for: """
+    Create an ordered answer with:
+    1. a short intro text block
+    2. one reference block with id doc-123
+    3. one metadata block
+    """,
+    as: SwiftFM.BlockResponse.self
+)
+
+for block in response.blocks {
+    switch block.kind {
+    case "text":
+        print(block.text ?? "")
+    case "reference":
+        print("Reference:", block.referenceID ?? "")
+    case "metadata":
+        print(block.metadataJSON ?? "")
+    default:
+        print(block.name ?? "custom")
+    }
+}
+```
+
+You can also build block responses by hand for tests or fallbacks:
+
+```swift
+let fallback = SwiftFM.blocks()
+    .text("I cannot load a live answer right now.")
+    .reference(id: "help-center", text: "Open help")
+    .metadata(name: "source", json: #"{"kind":"fallback"}"#)
+    .response()
+```
+
+The block types are generic. They are not tied to one app domain.
+
+## Token And Context Diagnostics
+
+Diagnostics are off by default.
+
+Turn them on when you are building or testing:
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .debug(.console)
+)
+```
+
+With Xcode and OS `26.4+`, you can inspect prompt size before sending a request:
+
+```swift
+if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
+    let info = try await fm.inspectRequest(
+        for: "Explain safety play in one sentence."
+    )
+
+    print(info.promptCharacterCount)
+    print(info.promptTokenCount ?? 0)
+    print(info.contextSize)
+}
+```
+
+You can also estimate tokens directly:
+
+```swift
+if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
+    let count = try await fm.tokenCount(
+        from: SwiftFM.prompt("Write a short summary.")
+            .requirement("One sentence only")
+    )
+
+    print(count)
+}
+```
+
+## Debug And Testing Helpers
+
+SwiftFM keeps debug helpers small and opt-in.
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .debug(
+            .init(isEnabled: true, printsToConsole: true, keepsEvents: true)
+                .warningNearContextLimit(0.75)
+        )
+)
+
+let text = try await fm.generateText(for: "Write a short answer.")
+let events = await fm.debugEvents
+```
+
+You can inspect tool usage from a transcript:
+
+```swift
+let transcript = await fm.transcript
+let toolNames = SwiftFM.toolCallNames(in: transcript)
+```
+
+You can inspect structured output shape:
+
+```swift
+let generated = SwiftFM.ResponseBlock.text("Hello").generatedContent
+let description = SwiftFM.structuredOutputDescription(generated)
+print(description)
+```
+
+## SwiftUI Observable Helper
+
+SwiftFM v3 includes a tiny `SwiftFMRunner`.
+
+It tracks:
+
+- loading state
+- latest output
+- latest error message
+
+It does not force an app architecture.
+
+```swift
+import SwiftUI
+import SwiftFM
+
+struct SummaryView: View {
+    @State private var runner = SwiftFMRunner<String>()
+
+    private let fm = SwiftFM(
+        config: SwiftFM.configuration()
+            .system("Explain things simply.")
+            .freshSessionPerRequest()
+    )
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if runner.isLoading {
+                ProgressView()
+            }
+
+            if let output = runner.output {
+                Text(output)
+            }
+
+            if let error = runner.errorMessage {
+                Text(error)
+            }
+
+            Button("Generate") {
+                Task {
+                    await runner.runText(
+                        "Explain a snooker safety shot.",
+                        using: fm
+                    )
+                }
+            }
+        }
+        .padding()
+    }
+}
+```
+
+You can use the generic runner for any async operation:
+
+```swift
+let runner = SwiftFMRunner<MatchPrediction>()
+
+await runner.run {
+    try await fm.generateJSON(
+        for: "Predict the match.",
+        as: MatchPrediction.self
+    )
+}
+```
+
+## Streaming
+
+Stream full snapshots:
+
+```swift
+for try await snapshot in await fm.streamText(
+    for: "Explain break-building in three short paragraphs."
+) {
+    print(snapshot)
+}
+```
+
+Stream only new text chunks:
+
+```swift
+var text = ""
+
+for try await delta in await fm.streamTextDeltas(
+    for: "Explain break-building in three short paragraphs."
+) {
+    text += delta
+}
+```
+
+Stream structured partial output:
 
 ```swift
 for try await partial in await fm.streamJSON(
-    for: "Generate a snooker match prediction.",
+    for: "Predict a match.",
     as: MatchPrediction.self
 ) {
     print(partial.winner ?? "Waiting...")
 }
 ```
 
-### Apple `26.4` Nil Handling
-
-If you want to use Apple's newer explicit-nil generation behavior, you can do that directly with Foundation Models and still use SwiftFM normally:
-
-```swift
-@Generable(representNilExplicitlyInGeneratedContent: true)
-struct OptionalNote: Decodable, Sendable {
-    let title: String
-    let subtitle: String?
-}
-```
-
 ## Dynamic Schemas
 
-New in `2.0`: you can generate runtime-structured content without creating a Swift type first.
+Use dynamic schemas when you need a runtime output shape.
 
 ```swift
-import FoundationModels
-
 let schema = DynamicGenerationSchema(
-    name: "SnookerNote",
+    name: "ShortNote",
     properties: [
         .init(
             name: "title",
@@ -303,250 +672,107 @@ let schema = DynamicGenerationSchema(
             schema: .init(type: String.self)
         ),
         .init(
-            name: "frameCount",
-            description: "Likely number of frames",
-            schema: .init(type: Int.self, guides: [.range(1 ... 35)])
+            name: "score",
+            description: "Score from 1 to 10",
+            schema: .init(type: Int.self, guides: [.range(1 ... 10)])
         )
     ]
 )
 
 let content = try await fm.generateContent(
-    for: "Generate a snooker match note with a title and likely frame count.",
+    for: "Create a short note.",
     dynamicSchema: schema
 )
 
 let title = try content.value(String.self, forProperty: "title")
-let frames = try content.value(Int.self, forProperty: "frameCount")
 ```
 
-### Dynamic Schema Streaming
+## Availability
+
+Check whether the model can run:
 
 ```swift
-for try await snapshot in await fm.streamContent(
-    for: "Generate a short structured match note.",
-    dynamicSchema: schema
-) {
-    print(snapshot.jsonString)
-}
-```
-
-## Tool Calling
-
-Use tools when the model should fetch live data or call app logic.
-
-```swift
-import SwiftFM
-import FoundationModels
-
-@Generable
-struct MatchLookupArgs: Decodable, Sendable {
-    @Guide(description: "Match id to fetch")
-    let id: String
-}
-
-struct MatchLookupTool: Tool {
-    let name = "match_lookup"
-    let description = "Fetches match JSON by id"
-
-    func call(arguments: MatchLookupArgs) async throws -> String {
-        """
-        {"id":"\(arguments.id)","home":"Player A","away":"Player B","venue":"Main Arena"}
-        """
-    }
-}
-
-let text = try await fm.generateText(
-    for: "Use match_lookup for id 123, then write a short neutral preview.",
-    request: SwiftFM.request()
-        .tool(MatchLookupTool())
-)
-```
-
-## Sampling and Temperature
-
-If you want more control, the existing sampling features are still available.
-
-```swift
-let fm = SwiftFM(
-    config: SwiftFM.configuration()
-        .model(.general)
-        .temperature(0.2)
-        .maximumResponseTokens(250)
-        .sampling(.greedy)
-)
-```
-
-## Model Selection
-
-SwiftFM model options:
-
-- `.default`
-- `.general`
-- `.contentTagging`
-- `.custom(SystemLanguageModel)`
-
-```swift
-let summary = try await fm.generateText(
-    for: "Give one tactical snooker tip.",
-    using: .general
-)
-
-let label = try await fm.generateText(
-    for: "Return one label only: billing, support, bug. Text: app crashes at launch.",
-    using: .contentTagging
-)
-```
-
-## Custom `SystemLanguageModel`
-
-If you want the raw Apple surface, that is still supported too.
-
-```swift
-import FoundationModels
-
-let customModel = SystemLanguageModel(
-    useCase: .general,
-    guardrails: .default
-)
-
-let fm = SwiftFM(
-    config: SwiftFM.configuration()
-        .model(.custom(customModel))
-)
-```
-
-## Custom Adapters
-
-New in `2.0`: adapter helpers make Apple adapter usage easier to discover.
-
-```swift
-let fm = SwiftFM(
-    config: .beginnerFriendly
-        .model(try .adapter(named: "MyAdapter"))
-)
-```
-
-You can also load an adapter from disk:
-
-```swift
-let model = try SwiftFM.Model.adapter(fileURL: adapterURL)
-let fm = SwiftFM(config: .init(model: model))
-```
-
-## Availability, Languages, and Locale
-
-```swift
-if SwiftFM.isModelAvailable && SwiftFM.supportsCurrentLocale() {
+if SwiftFM.isModelAvailable {
     print("Ready")
 } else {
-    print("Unavailable: \(SwiftFM.modelAvailability)")
-}
-
-let languages = SwiftFM.supportedLanguages(for: .default)
-print(languages)
-```
-
-## Token Counting (`26.4+`)
-
-Apple added token counting in `26.4`, and SwiftFM now exposes it.
-
-```swift
-if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
-    let count = try await fm.tokenCount(
-        from: SwiftFM.prompt("Explain a snooker safety shot.")
-            .requirement("One sentence only")
-    )
-
-    print("Prompt tokens:", count)
+    print(SwiftFM.modelAvailability)
 }
 ```
 
-There are also static helpers for tools, schemas, and transcript entries:
+Check locale support:
 
 ```swift
-if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
-    let count = try await SwiftFM.tokenCount(for: schema)
-    print(count)
+if SwiftFM.supportsCurrentLocale() {
+    print("This locale is supported.")
 }
-```
-
-## Feedback Attachments
-
-Apple recommends exporting feedback attachments when a response is poor or guardrails trigger unexpectedly.
-
-New in `2.0`: you can export that attachment directly from the current session.
-
-```swift
-let attachment = await fm.feedbackAttachment(
-    sentiment: .negative,
-    issues: [
-        .init(category: .didNotFollowInstructions, explanation: "It ignored the output format.")
-    ],
-    desiredResponseText: "A short plain-text answer in exactly two sentences."
-)
-
-print("Attachment bytes:", attachment.count)
 ```
 
 ## Session Helpers
 
-```swift
-let fm = SwiftFM(
-    config: .beginnerFriendly
-        .system("You are concise.")
-)
+These helpers apply to the reusable actor session:
 
+```swift
 await fm.prewarm(promptPrefix: "Match analysis")
 let busy = await fm.isBusy
 let transcript = await fm.transcript
-await fm.resetConversation()
+await fm.clearSession()
 ```
 
-What these do:
-
-- `prewarm(promptPrefix:)`: reduce first-response latency
-- `isBusy`: `true` while the session is generating
-- `transcript`: inspect the current conversation history
-- `resetConversation()`: clear the session and start fresh with the same base config
+Remember: in v3, normal generation uses fresh sessions unless you opt into reuse.
 
 ## Error Handling
 
 ```swift
 do {
-    let text = try await fm.generateText(for: "Analyze this match.")
+    let text = try await fm.generateText(for: "Write a short answer.")
     print(text)
 } catch let error as SwiftFM.SwiftFMError {
     print(error.localizedDescription)
 
     if let generationError = error.generationError {
-        print("Foundation Models error:", generationError)
+        print(generationError)
     }
 } catch {
     print(error.localizedDescription)
 }
 ```
 
-## Existing APIs Still Work
+## Migrating From v2
 
-`2.0.0` adds fluent builder-style usage, but it does not remove the current feature set.
+The main behavior change is session context.
 
-These still work:
+In v2, normal calls reused the actor session more often.
 
-- `SwiftFM(config: .init(...))`
-- `RequestConfig(...)`
-- `PromptSpec(...)`
-- `generateText`
-- `streamText`
-- `streamTextDeltas`
-- `generateJSON`
-- request-scoped tools
-- context embedding options
-- post-processing options
-- custom `SystemLanguageModel`
+In v3, normal calls use a fresh session per request by default.
+
+If your app is one-shot, you probably do not need to change anything.
+
+If your app is conversational, add `.reusingSession()`:
+
+```swift
+let fm = SwiftFM(
+    config: SwiftFM.configuration()
+        .reusingSession()
+)
+```
+
+Use `clearSession()` when the conversation should start over.
+
+The old API style still works:
+
+```swift
+let fm = SwiftFM(
+    config: .init(
+        system: "You are concise.",
+        model: .general,
+        temperature: 0.3
+    )
+)
+```
 
 ## Version
 
-- Current source version: `2.0.0`
+- Current source version: `3.0.0`
 
 ## License
 

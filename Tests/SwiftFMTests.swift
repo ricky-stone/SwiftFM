@@ -52,6 +52,12 @@ struct SwiftFMSnookerTests {
     }
 
     @Generable
+    struct ShortAnswer: Decodable, Sendable {
+        @Guide(description: "One sentence answer")
+        let answer: String
+    }
+
+    @Generable
     struct PlayerFormArguments: Decodable, Sendable {
         @Guide(description: "Player name")
         let player: String
@@ -129,6 +135,7 @@ struct SwiftFMSnookerTests {
         let config = SwiftFM.configuration()
             .system("You are a concise snooker helper.")
             .model(.general)
+            .reusingSession()
             .temperature(0.2)
             .maximumResponseTokens(120)
             .contextOptions(
@@ -141,16 +148,19 @@ struct SwiftFMSnookerTests {
                     .trimmingWhitespace()
                     .collapsingSpacesAndTabs()
             )
+            .debug(.console)
 
         let request = SwiftFM.request()
             .model(.contentTagging)
             .tools([PlayerFormTool()])
             .tool(PlayerFormTool())
+            .freshSession()
             .temperature(0.1)
             .maximumResponseTokens(40)
             .includeSchemaInPrompt(false)
             .contextOptions(.init().heading("Compact Payload").jsonFormatting(.compact))
             .postProcessing(.readableParagraphs)
+            .fallbackText("Unable to generate a response.")
 
         let rendered = spec.render()
 
@@ -168,15 +178,103 @@ struct SwiftFMSnookerTests {
         #expect(config.contextOptions.jsonFormatting == .compactSorted)
         #expect(config.postProcessing.trimWhitespace)
         #expect(config.postProcessing.collapseSpacesAndTabs)
+        #expect(config.sessionPolicy == .reused)
+        #expect(config.debugOptions.isEnabled)
 
         #expect(isContentTagging(request.model))
         #expect(request.tools?.count == 2)
+        #expect(request.sessionPolicy == .freshPerRequest)
         #expect(request.temperature == 0.1)
         #expect(request.maximumResponseTokens == 40)
         #expect(request.includeSchemaInPrompt == false)
         #expect(request.contextOptions?.heading == "Compact Payload")
         #expect(request.contextOptions?.jsonFormatting == .compact)
         #expect(request.postProcessing == .readableParagraphs)
+        #expect(request.fallbackPolicy?.guardrailViolation == .fallbackText("Unable to generate a response."))
+    }
+
+    @Test("Session policy defaults to fresh per request")
+    func sessionPolicyDefaults() {
+        let defaultConfig = SwiftFM.Config()
+        let reusable = SwiftFM.configuration().reusingSession()
+        let manual = SwiftFM.configuration().manualSession()
+
+        #expect(defaultConfig.sessionPolicy == .freshPerRequest)
+        #expect(reusable.sessionPolicy == .reused)
+        #expect(manual.sessionPolicy == .manual)
+    }
+
+    @Test("Tool groups and registries compose tools")
+    func toolGroupsAndRegistry() {
+        let dataTools = SwiftFM.toolGroup("data")
+            .tool(PlayerFormTool())
+
+        let registry = SwiftFM.toolRegistry()
+            .group(dataTools)
+            .group(named: "more-data", tools: [PlayerFormTool()])
+
+        let config = SwiftFM.configuration()
+            .toolGroup(dataTools)
+            .toolRegistry(registry)
+            .optionalToolGroup(dataTools)
+
+        let request = SwiftFM.request()
+            .toolGroup(dataTools)
+            .toolRegistry(registry)
+            .optionalTool(PlayerFormTool())
+
+        #expect(dataTools.tools.count == 1)
+        #expect(registry.tools.count == 2)
+        #expect(config.tools.count == 3)
+        #expect(config.optionalTools.count == 1)
+        #expect(request.tools?.count == 3)
+        #expect(request.optionalTools?.count == 1)
+    }
+
+    @Test("Fallback policies stay explicit and readable")
+    func fallbackPolicies() {
+        let policy = SwiftFM.FallbackPolicy.none
+            .onGuardrailViolation(.fallbackText("That response is not available."))
+            .onUnavailableModel(.fallbackText("Apple Intelligence is not ready."))
+            .retryWithReducedContext()
+            .retryWithoutOptionalTools()
+
+        #expect(policy.guardrailViolation == .fallbackText("That response is not available."))
+        #expect(policy.unavailableModel == .fallbackText("Apple Intelligence is not ready."))
+        #expect(policy.contextOverflow == .retryWithFreshSession)
+        #expect(policy.toolFailure == .retryWithoutOptionalTools)
+    }
+
+    @Test("Generic block responses build ordered mixed content")
+    func blockResponseBuilder() {
+        let response = SwiftFM.blocks()
+            .text("Start with a short explanation.")
+            .reference(id: "doc-123", text: "Read more")
+            .metadata(name: "source", json: #"{"kind":"guide"}"#)
+            .custom(name: "cta", text: "Open details", json: #"{"id":"abc"}"#)
+            .response()
+
+        #expect(response.blocks.count == 4)
+        #expect(response.blocks[0].kind == "text")
+        #expect(response.blocks[1].referenceID == "doc-123")
+        #expect(response.blocks[2].name == "source")
+        #expect(response.blocks[3].kind == "custom")
+    }
+
+    @Test("Workflow builder keeps orchestration compact")
+    func workflowBuilder() {
+        let workflow = SwiftFM.workflow(generating: ShortAnswer.self)
+            .instructions("Answer simply.")
+            .model(.general)
+            .tool(PlayerFormTool())
+            .request(.beginnerFriendly.freshSession())
+            .fallback(.init(answer: "Fallback answer."))
+
+        #expect(workflow.config.system == "Answer simply.")
+        #expect(isGeneral(workflow.config.model))
+        #expect(workflow.config.tools.count == 1)
+        #expect(workflow.request.sessionPolicy == .freshPerRequest)
+        #expect(workflow.fallbackOutput?.answer == "Fallback answer.")
     }
 
     @Test("Text post-processing formats paragraphs and rounds decimals")
@@ -196,7 +294,7 @@ struct SwiftFMSnookerTests {
 
     @Test("Public version marker is current")
     func versionMarker() {
-        #expect(SwiftFMVersion.current == "2.0.0")
+        #expect(SwiftFMVersion.current == "3.0.0")
     }
 
     @Test("Text: prompt only")
@@ -207,6 +305,19 @@ struct SwiftFMSnookerTests {
         try await assertNonEmptyOrGuardrail {
             try await fm.generateText(for: "Define a snooker century break in one sentence.")
         }
+    }
+
+    @Test("Text: default fresh session does not grow shared transcript")
+    func defaultFreshSessionKeepsSharedTranscriptEmpty() async throws {
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM()
+        try await assertNonEmptyOrGuardrail {
+            try await fm.generateText(for: "Define a snooker century break in one sentence.")
+        }
+
+        let transcript = await fm.transcript
+        #expect(transcript.isEmpty)
     }
 
     @Test("Text: prompt + context model")
@@ -428,5 +539,41 @@ struct SwiftFMSnookerTests {
         let fm = SwiftFM()
         let count = try await fm.tokenCount(for: "Explain a snooker safety shot in one sentence.")
         #expect(count > 0)
+    }
+
+    @Test("Helpers: request diagnostics inspect prompt size")
+    func requestDiagnostics() async throws {
+        guard #available(macOS 26.4, iOS 26.4, visionOS 26.4, *) else { return }
+        guard SwiftFM.isModelAvailable else { return }
+
+        let fm = SwiftFM(
+            config: .init(debugOptions: .init(isEnabled: true, keepsEvents: true))
+        )
+        let diagnostics = try await fm.inspectRequest(
+            for: "Explain a snooker safety shot in one sentence."
+        )
+
+        #expect(diagnostics.promptCharacterCount > 0)
+        #expect(diagnostics.contextSize > 0)
+        #expect(diagnostics.sessionPolicy == .freshPerRequest)
+    }
+
+    @Test("Observable runner tracks loading, output, and reset")
+    @MainActor
+    func observableRunner() async {
+        let runner = SwiftFMRunner<String>()
+
+        await runner.run {
+            "Finished"
+        }
+
+        #expect(runner.isLoading == false)
+        #expect(runner.output == "Finished")
+        #expect(runner.errorMessage == nil)
+
+        runner.reset()
+
+        #expect(runner.output == nil)
+        #expect(runner.errorMessage == nil)
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Observation
 
 /// `SwiftFM` is a beginner-friendly facade over Apple's Foundation Models framework.
 ///
@@ -90,6 +91,382 @@ public actor SwiftFM {
         case deltas
     }
 
+    /// Controls whether calls share conversation context or start clean.
+    public enum SessionPolicy: Sendable, Equatable {
+        /// Every request gets a new Foundation Models session. This is the v3 default.
+        case freshPerRequest
+        /// Requests reuse the actor's session and transcript until reset.
+        case reused
+        /// Same reuse behavior, named for apps that want explicit reset control.
+        case manual
+
+        fileprivate var usesSharedSession: Bool {
+            switch self {
+            case .freshPerRequest:
+                return false
+            case .reused, .manual:
+                return true
+            }
+        }
+    }
+
+    /// Conservative fallback actions for common real-app failures.
+    public enum FallbackAction: Sendable, Equatable {
+        case fail
+        case fallbackText(String)
+        case retryWithFreshSession
+        case retryWithoutOptionalTools
+    }
+
+    /// Simple fallback policy for repetitive Foundation Models failure cases.
+    public struct FallbackPolicy: Sendable, Equatable {
+        public var guardrailViolation: FallbackAction
+        public var unavailableModel: FallbackAction
+        public var contextOverflow: FallbackAction
+        public var toolFailure: FallbackAction
+
+        public init(
+            guardrailViolation: FallbackAction = .fail,
+            unavailableModel: FallbackAction = .fail,
+            contextOverflow: FallbackAction = .fail,
+            toolFailure: FallbackAction = .fail
+        ) {
+            self.guardrailViolation = guardrailViolation
+            self.unavailableModel = unavailableModel
+            self.contextOverflow = contextOverflow
+            self.toolFailure = toolFailure
+        }
+
+        public static var none: Self { .init() }
+
+        public func onGuardrailViolation(_ action: FallbackAction) -> Self {
+            var copy = self
+            copy.guardrailViolation = action
+            return copy
+        }
+
+        public func onUnavailableModel(_ action: FallbackAction) -> Self {
+            var copy = self
+            copy.unavailableModel = action
+            return copy
+        }
+
+        public func retryWithReducedContext() -> Self {
+            var copy = self
+            copy.contextOverflow = .retryWithFreshSession
+            return copy
+        }
+
+        public func retryWithoutOptionalTools() -> Self {
+            var copy = self
+            copy.toolFailure = .retryWithoutOptionalTools
+            return copy
+        }
+
+        public func fallbackText(_ text: String) -> Self {
+            var copy = self
+            let action = FallbackAction.fallbackText(text)
+            copy.guardrailViolation = action
+            copy.unavailableModel = action
+            return copy
+        }
+    }
+
+    /// Opt-in diagnostics for development and testing.
+    public struct DebugOptions: Sendable, Equatable {
+        public var isEnabled: Bool
+        public var printsToConsole: Bool
+        public var keepsEvents: Bool
+        public var contextWarningRatio: Double
+
+        public init(
+            isEnabled: Bool = false,
+            printsToConsole: Bool = false,
+            keepsEvents: Bool = false,
+            contextWarningRatio: Double = 0.8
+        ) {
+            self.isEnabled = isEnabled
+            self.printsToConsole = printsToConsole
+            self.keepsEvents = keepsEvents
+            self.contextWarningRatio = min(max(contextWarningRatio, 0.1), 1.0)
+        }
+
+        public static var disabled: Self { .init() }
+
+        public static var console: Self {
+            .init(isEnabled: true, printsToConsole: true, keepsEvents: true)
+        }
+
+        public func enabled(_ enabled: Bool = true) -> Self {
+            var copy = self
+            copy.isEnabled = enabled
+            return copy
+        }
+
+        public func printingToConsole(_ enabled: Bool = true) -> Self {
+            var copy = self
+            copy.printsToConsole = enabled
+            return copy
+        }
+
+        public func keepingEvents(_ enabled: Bool = true) -> Self {
+            var copy = self
+            copy.keepsEvents = enabled
+            return copy
+        }
+
+        public func warningNearContextLimit(_ ratio: Double = 0.8) -> Self {
+            var copy = self
+            copy.contextWarningRatio = min(max(ratio, 0.1), 1.0)
+            return copy
+        }
+    }
+
+    /// A recorded debug event. Events are stored only when debug options ask for them.
+    public struct DebugEvent: Sendable, Equatable {
+        public let category: String
+        public let message: String
+
+        public init(category: String, message: String) {
+            self.category = category
+            self.message = message
+        }
+    }
+
+    /// Prompt and context-size information for development diagnostics.
+    public struct RequestDiagnostics: Sendable, Equatable {
+        public let promptCharacterCount: Int
+        public let promptTokenCount: Int?
+        public let contextSize: Int
+        public let toolCount: Int
+        public let sessionPolicy: SessionPolicy
+
+        public var contextUsageRatio: Double? {
+            guard let promptTokenCount else { return nil }
+            return Double(promptTokenCount) / Double(contextSize)
+        }
+
+        public var isNearContextLimit: Bool {
+            guard let contextUsageRatio else { return false }
+            return contextUsageRatio >= 0.8
+        }
+    }
+
+    /// A named group of related tools.
+    public struct ToolGroup: Sendable {
+        public var name: String
+        public var tools: [any Tool]
+
+        public init(name: String = "Tools", tools: [any Tool] = []) {
+            self.name = name
+            self.tools = tools
+        }
+
+        public func tool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.tools.append(tool)
+            return copy
+        }
+
+        public func tools(_ tools: [any Tool]) -> Self {
+            var copy = self
+            copy.tools.append(contentsOf: tools)
+            return copy
+        }
+    }
+
+    /// A small registry for composing shared tool groups.
+    public struct ToolRegistry: Sendable {
+        public var groups: [ToolGroup]
+
+        public init(groups: [ToolGroup] = []) {
+            self.groups = groups
+        }
+
+        public var tools: [any Tool] {
+            groups.flatMap(\.tools)
+        }
+
+        public func group(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.groups.append(group)
+            return copy
+        }
+
+        public func group(named name: String, tools: [any Tool]) -> Self {
+            group(.init(name: name, tools: tools))
+        }
+    }
+
+    /// One generic mixed-content block for structured app UIs.
+    @Generable
+    public struct ResponseBlock: Decodable, Sendable {
+        @Guide(description: "Block kind: text, reference, metadata, or custom", .anyOf(["text", "reference", "metadata", "custom"]))
+        public let kind: String
+
+        @Guide(description: "Plain text for text blocks or a short label for other blocks")
+        public let text: String?
+
+        @Guide(description: "Stable reference id for app data, documents, records, or external objects")
+        public let referenceID: String?
+
+        @Guide(description: "Custom block name when kind is custom or metadata")
+        public let name: String?
+
+        @Guide(description: "Small JSON string for metadata or custom payloads")
+        public let metadataJSON: String?
+
+        public init(
+            kind: String,
+            text: String? = nil,
+            referenceID: String? = nil,
+            name: String? = nil,
+            metadataJSON: String? = nil
+        ) {
+            self.kind = kind
+            self.text = text
+            self.referenceID = referenceID
+            self.name = name
+            self.metadataJSON = metadataJSON
+        }
+
+        public static func text(_ text: String) -> Self {
+            .init(kind: "text", text: text)
+        }
+
+        public static func reference(id: String, text: String? = nil) -> Self {
+            .init(kind: "reference", text: text, referenceID: id)
+        }
+
+        public static func metadata(name: String, json: String) -> Self {
+            .init(kind: "metadata", name: name, metadataJSON: json)
+        }
+
+        public static func custom(name: String, text: String? = nil, json: String? = nil) -> Self {
+            .init(kind: "custom", text: text, name: name, metadataJSON: json)
+        }
+    }
+
+    /// Ordered mixed-content output for app UIs.
+    @Generable
+    public struct BlockResponse: Decodable, Sendable {
+        @Guide(description: "Ordered blocks to render in the app UI")
+        public let blocks: [ResponseBlock]
+
+        public init(blocks: [ResponseBlock]) {
+            self.blocks = blocks
+        }
+    }
+
+    /// Builder for hand-authored block responses in tests or fallbacks.
+    public struct BlockResponseBuilder: Sendable {
+        public var blocks: [ResponseBlock]
+
+        public init(blocks: [ResponseBlock] = []) {
+            self.blocks = blocks
+        }
+
+        public func text(_ text: String) -> Self {
+            var copy = self
+            copy.blocks.append(.text(text))
+            return copy
+        }
+
+        public func reference(id: String, text: String? = nil) -> Self {
+            var copy = self
+            copy.blocks.append(.reference(id: id, text: text))
+            return copy
+        }
+
+        public func metadata(name: String, json: String) -> Self {
+            var copy = self
+            copy.blocks.append(.metadata(name: name, json: json))
+            return copy
+        }
+
+        public func custom(name: String, text: String? = nil, json: String? = nil) -> Self {
+            var copy = self
+            copy.blocks.append(.custom(name: name, text: text, json: json))
+            return copy
+        }
+
+        public func response() -> BlockResponse {
+            .init(blocks: blocks)
+        }
+    }
+
+    /// Lightweight structured workflow for one clear app task.
+    public struct Workflow<Output: Decodable & Sendable & Generable>: Sendable {
+        public var config: Config
+        public var request: RequestConfig
+        public var outputType: Output.Type
+        public var fallbackOutput: Output?
+
+        public init(
+            generating outputType: Output.Type,
+            config: Config = .init(),
+            request: RequestConfig = .init(),
+            fallbackOutput: Output? = nil
+        ) {
+            self.outputType = outputType
+            self.config = config
+            self.request = request
+            self.fallbackOutput = fallbackOutput
+        }
+
+        public func instructions(_ instructions: String?) -> Self {
+            var copy = self
+            copy.config = copy.config.system(instructions)
+            return copy
+        }
+
+        public func model(_ model: Model) -> Self {
+            var copy = self
+            copy.config = copy.config.model(model)
+            return copy
+        }
+
+        public func tool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.config = copy.config.tool(tool)
+            return copy
+        }
+
+        public func toolGroup(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.config = copy.config.toolGroup(group)
+            return copy
+        }
+
+        public func request(_ request: RequestConfig) -> Self {
+            var copy = self
+            copy.request = request
+            return copy
+        }
+
+        public func fallback(_ output: Output?) -> Self {
+            var copy = self
+            copy.fallbackOutput = output
+            return copy
+        }
+
+        public func run(_ prompt: String) async throws -> Output {
+            let fm = SwiftFM(config: config)
+            do {
+                return try await fm.generateJSON(for: prompt, as: outputType, request: request)
+            } catch {
+                if let fallbackOutput {
+                    return fallbackOutput
+                }
+                throw error
+            }
+        }
+
+        public func run(_ spec: PromptSpec) async throws -> Output {
+            try await run(spec.render())
+        }
+    }
+
     /// Begin a beginner-friendly fluent config chain.
     public static func configuration() -> Config { .init() }
 
@@ -98,6 +475,24 @@ public actor SwiftFM {
 
     /// Begin a beginner-friendly prompt chain.
     public static func prompt(_ task: String) -> PromptSpec { .init(task: task) }
+
+    /// Begin a named tool group.
+    public static func toolGroup(_ name: String = "Tools") -> ToolGroup {
+        .init(name: name)
+    }
+
+    /// Begin a tool registry.
+    public static func toolRegistry() -> ToolRegistry { .init() }
+
+    /// Begin a hand-authored mixed block response.
+    public static func blocks() -> BlockResponseBuilder { .init() }
+
+    /// Begin a lightweight structured workflow.
+    public static func workflow<Output: Decodable & Sendable & Generable>(
+        generating type: Output.Type
+    ) -> Workflow<Output> {
+        .init(generating: type)
+    }
 
     /// Structured prompt builder for better model instruction-following.
     ///
@@ -431,30 +826,42 @@ public actor SwiftFM {
         public var system: String?
         public var model: Model
         public var tools: [any Tool]
+        public var optionalTools: [any Tool]
         public var temperature: Double?
         public var maximumResponseTokens: Int?
         public var sampling: Sampling
         public var contextOptions: ContextOptions
         public var postProcessing: TextPostProcessing
+        public var sessionPolicy: SessionPolicy
+        public var fallbackPolicy: FallbackPolicy
+        public var debugOptions: DebugOptions
 
         public init(
             system: String? = nil,
             model: Model = .default,
             tools: [any Tool] = [],
+            optionalTools: [any Tool] = [],
             temperature: Double? = 0.6,
             maximumResponseTokens: Int? = nil,
             sampling: Sampling = .automatic,
             contextOptions: ContextOptions = .init(),
-            postProcessing: TextPostProcessing = .none
+            postProcessing: TextPostProcessing = .none,
+            sessionPolicy: SessionPolicy = .freshPerRequest,
+            fallbackPolicy: FallbackPolicy = .none,
+            debugOptions: DebugOptions = .disabled
         ) {
             self.system = system
             self.model = model
             self.tools = tools
+            self.optionalTools = optionalTools
             self.temperature = temperature
             self.maximumResponseTokens = maximumResponseTokens
             self.sampling = sampling
             self.contextOptions = contextOptions
             self.postProcessing = postProcessing
+            self.sessionPolicy = sessionPolicy
+            self.fallbackPolicy = fallbackPolicy
+            self.debugOptions = debugOptions
         }
 
         /// A beginner-friendly preset that keeps outputs tidy for UI work.
@@ -487,6 +894,41 @@ public actor SwiftFM {
         public func tool(_ tool: any Tool) -> Self {
             var copy = self
             copy.tools.append(tool)
+            return copy
+        }
+
+        /// Append a related group of tools.
+        public func toolGroup(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.tools.append(contentsOf: group.tools)
+            return copy
+        }
+
+        /// Append all tools from a registry.
+        public func toolRegistry(_ registry: ToolRegistry) -> Self {
+            var copy = self
+            copy.tools.append(contentsOf: registry.tools)
+            return copy
+        }
+
+        /// Replace optional tools. Optional tools can be dropped by fallback retries.
+        public func optionalTools(_ optionalTools: [any Tool]) -> Self {
+            var copy = self
+            copy.optionalTools = optionalTools
+            return copy
+        }
+
+        /// Append one optional tool.
+        public func optionalTool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.optionalTools.append(tool)
+            return copy
+        }
+
+        /// Append an optional tool group.
+        public func optionalToolGroup(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.optionalTools.append(contentsOf: group.tools)
             return copy
         }
 
@@ -524,37 +966,110 @@ public actor SwiftFM {
             copy.postProcessing = postProcessing
             return copy
         }
+
+        /// Use a clean Foundation Models session for every request.
+        public func freshSessionPerRequest() -> Self {
+            sessionPolicy(.freshPerRequest)
+        }
+
+        /// Reuse the session transcript across requests for conversation-style apps.
+        public func reusingSession() -> Self {
+            sessionPolicy(.reused)
+        }
+
+        /// Reuse the session, with reset/clear calls controlled by the developer.
+        public func manualSession() -> Self {
+            sessionPolicy(.manual)
+        }
+
+        /// Set session/context behavior.
+        public func sessionPolicy(_ sessionPolicy: SessionPolicy) -> Self {
+            var copy = self
+            copy.sessionPolicy = sessionPolicy
+            return copy
+        }
+
+        /// Set fallback behavior.
+        public func fallbackPolicy(_ fallbackPolicy: FallbackPolicy) -> Self {
+            var copy = self
+            copy.fallbackPolicy = fallbackPolicy
+            return copy
+        }
+
+        /// Convenience for guardrail fallback text.
+        public func onGuardrailViolation(_ action: FallbackAction) -> Self {
+            fallbackPolicy(fallbackPolicy.onGuardrailViolation(action))
+        }
+
+        /// Convenience for unavailable-model fallback behavior.
+        public func onUnavailableModel(_ action: FallbackAction) -> Self {
+            fallbackPolicy(fallbackPolicy.onUnavailableModel(action))
+        }
+
+        /// Set one fallback text for guardrail and unavailable-model failures.
+        public func fallbackText(_ text: String) -> Self {
+            fallbackPolicy(fallbackPolicy.fallbackText(text))
+        }
+
+        /// Retry context-window failures with a fresh session.
+        public func retryWithReducedContext() -> Self {
+            fallbackPolicy(fallbackPolicy.retryWithReducedContext())
+        }
+
+        /// Retry tool failures without optional tools.
+        public func retryWithoutOptionalTools() -> Self {
+            fallbackPolicy(fallbackPolicy.retryWithoutOptionalTools())
+        }
+
+        /// Set development diagnostics.
+        public func debug(_ debugOptions: DebugOptions = .console) -> Self {
+            var copy = self
+            copy.debugOptions = debugOptions
+            return copy
+        }
     }
 
     /// One-off overrides for a single request.
     public struct RequestConfig: Sendable {
         public var model: Model?
         public var tools: [any Tool]?
+        public var optionalTools: [any Tool]?
         public var temperature: Double?
         public var maximumResponseTokens: Int?
         public var sampling: Sampling?
         public var includeSchemaInPrompt: Bool
         public var contextOptions: ContextOptions?
         public var postProcessing: TextPostProcessing?
+        public var sessionPolicy: SessionPolicy?
+        public var fallbackPolicy: FallbackPolicy?
+        public var debugOptions: DebugOptions?
 
         public init(
             model: Model? = nil,
             tools: [any Tool]? = nil,
+            optionalTools: [any Tool]? = nil,
             temperature: Double? = nil,
             maximumResponseTokens: Int? = nil,
             sampling: Sampling? = nil,
             includeSchemaInPrompt: Bool = true,
             contextOptions: ContextOptions? = nil,
-            postProcessing: TextPostProcessing? = nil
+            postProcessing: TextPostProcessing? = nil,
+            sessionPolicy: SessionPolicy? = nil,
+            fallbackPolicy: FallbackPolicy? = nil,
+            debugOptions: DebugOptions? = nil
         ) {
             self.model = model
             self.tools = tools
+            self.optionalTools = optionalTools
             self.temperature = temperature
             self.maximumResponseTokens = maximumResponseTokens
             self.sampling = sampling
             self.includeSchemaInPrompt = includeSchemaInPrompt
             self.contextOptions = contextOptions
             self.postProcessing = postProcessing
+            self.sessionPolicy = sessionPolicy
+            self.fallbackPolicy = fallbackPolicy
+            self.debugOptions = debugOptions
         }
 
         /// A beginner-friendly request preset that keeps text outputs tidy.
@@ -580,6 +1095,41 @@ public actor SwiftFM {
         public func tool(_ tool: any Tool) -> Self {
             var copy = self
             copy.tools = (copy.tools ?? []) + [tool]
+            return copy
+        }
+
+        /// Append a related group of request-scoped tools.
+        public func toolGroup(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.tools = (copy.tools ?? []) + group.tools
+            return copy
+        }
+
+        /// Append all tools from a registry.
+        public func toolRegistry(_ registry: ToolRegistry) -> Self {
+            var copy = self
+            copy.tools = (copy.tools ?? []) + registry.tools
+            return copy
+        }
+
+        /// Replace optional request-scoped tools.
+        public func optionalTools(_ optionalTools: [any Tool]?) -> Self {
+            var copy = self
+            copy.optionalTools = optionalTools
+            return copy
+        }
+
+        /// Append an optional request-scoped tool.
+        public func optionalTool(_ tool: any Tool) -> Self {
+            var copy = self
+            copy.optionalTools = (copy.optionalTools ?? []) + [tool]
+            return copy
+        }
+
+        /// Append an optional request-scoped tool group.
+        public func optionalToolGroup(_ group: ToolGroup) -> Self {
+            var copy = self
+            copy.optionalTools = (copy.optionalTools ?? []) + group.tools
             return copy
         }
 
@@ -622,6 +1172,62 @@ public actor SwiftFM {
         public func postProcessing(_ postProcessing: TextPostProcessing?) -> Self {
             var copy = self
             copy.postProcessing = postProcessing
+            return copy
+        }
+
+        /// Use a clean Foundation Models session for this request.
+        public func freshSession() -> Self {
+            sessionPolicy(.freshPerRequest)
+        }
+
+        /// Reuse the actor's session for this request.
+        public func reusedSession() -> Self {
+            sessionPolicy(.reused)
+        }
+
+        /// Set request-level session behavior.
+        public func sessionPolicy(_ sessionPolicy: SessionPolicy?) -> Self {
+            var copy = self
+            copy.sessionPolicy = sessionPolicy
+            return copy
+        }
+
+        /// Set request-level fallback behavior.
+        public func fallbackPolicy(_ fallbackPolicy: FallbackPolicy?) -> Self {
+            var copy = self
+            copy.fallbackPolicy = fallbackPolicy
+            return copy
+        }
+
+        /// Convenience for request-level guardrail fallback behavior.
+        public func onGuardrailViolation(_ action: FallbackAction) -> Self {
+            fallbackPolicy((fallbackPolicy ?? .none).onGuardrailViolation(action))
+        }
+
+        /// Convenience for request-level unavailable-model fallback behavior.
+        public func onUnavailableModel(_ action: FallbackAction) -> Self {
+            fallbackPolicy((fallbackPolicy ?? .none).onUnavailableModel(action))
+        }
+
+        /// Set one fallback text for guardrail and unavailable-model failures.
+        public func fallbackText(_ text: String) -> Self {
+            fallbackPolicy((fallbackPolicy ?? .none).fallbackText(text))
+        }
+
+        /// Retry context-window failures with a fresh session.
+        public func retryWithReducedContext() -> Self {
+            fallbackPolicy((fallbackPolicy ?? .none).retryWithReducedContext())
+        }
+
+        /// Retry tool failures without optional tools.
+        public func retryWithoutOptionalTools() -> Self {
+            fallbackPolicy((fallbackPolicy ?? .none).retryWithoutOptionalTools())
+        }
+
+        /// Set request-level diagnostics.
+        public func debug(_ debugOptions: DebugOptions? = .console) -> Self {
+            var copy = self
+            copy.debugOptions = debugOptions
             return copy
         }
     }
@@ -695,13 +1301,14 @@ public actor SwiftFM {
 
     private let config: Config
     private var session: LanguageModelSession
+    private var debugEventsStorage: [DebugEvent] = []
 
     /// Create a new client.
     public init(config: Config = .init()) {
         self.config = config
         self.session = Self.makeSession(
             model: config.model,
-            tools: config.tools,
+            tools: config.tools + config.optionalTools,
             instructions: config.system
         )
     }
@@ -724,8 +1331,7 @@ public actor SwiftFM {
         for prompt: String,
         request: RequestConfig
     ) async throws -> String {
-        let p = Prompt(prompt)
-        return try await generateText(prompt: p, request: request)
+        try await generateText(promptText: prompt, request: request)
     }
 
     /// Generate plain text and explicitly choose a model for this request.
@@ -748,10 +1354,8 @@ public actor SwiftFM {
         context: Context,
         request: RequestConfig = .init()
     ) async throws -> String {
-        let contextualPrompt = Prompt(
-            try contextPrompt(basePrompt: prompt, context: context, request: request)
-        )
-        return try await generateText(prompt: contextualPrompt, request: request)
+        let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+        return try await generateText(promptText: contextualPrompt, request: request)
     }
 
     /// Generate text from a structured prompt spec plus context model.
@@ -770,9 +1374,10 @@ public actor SwiftFM {
         request: RequestConfig = .init()
     ) async throws -> T {
         let resolved = resolve(request)
-        try Self.ensureModelAvailable(resolved.model)
+        try await inspectIfNeeded(promptText: prompt, resolved: resolved)
 
         do {
+            try Self.ensureModelAvailable(resolved.model)
             let response = try await resolved.session.respond(
                 to: prompt,
                 generating: T.self,
@@ -783,7 +1388,7 @@ public actor SwiftFM {
         } catch let toolError as LanguageModelSession.ToolCallError {
             throw SwiftFMError.toolCallFailed(toolError)
         } catch {
-            throw SwiftFMError.generationFailed(error)
+            throw Self.map(error)
         }
     }
 
@@ -1256,7 +1861,7 @@ public actor SwiftFM {
         }
     }
 
-    /// Warm up the default session to reduce first-token latency.
+    /// Warm up the shared reusable session to reduce first-token latency.
     public func prewarm(promptPrefix: String? = nil) {
         if let promptPrefix {
             session.prewarm(promptPrefix: Prompt(promptPrefix))
@@ -1307,20 +1912,54 @@ public actor SwiftFM {
         )
     }
 
-    /// Reset the default session transcript and conversation state.
+    /// Reset the shared reusable session transcript and conversation state.
     public func resetConversation() {
         session = Self.makeSession(
             model: config.model,
-            tools: config.tools,
+            tools: config.tools + config.optionalTools,
             instructions: config.system
         )
     }
 
-    /// Transcript of the default session.
+    /// Alias for `resetConversation()` that reads naturally with manual sessions.
+    public func clearSession() {
+        resetConversation()
+    }
+
+    /// Transcript of the shared reusable session.
     public var transcript: Transcript { session.transcript }
 
-    /// Indicates whether the default session is currently responding.
+    /// Indicates whether the shared reusable session is currently responding.
     public var isBusy: Bool { session.isResponding }
+
+    /// Stored debug events for this actor, when enabled by `DebugOptions`.
+    public var debugEvents: [DebugEvent] { debugEventsStorage }
+
+    /// Clear stored debug events.
+    public func clearDebugEvents() {
+        debugEventsStorage.removeAll()
+    }
+
+    /// Inspect prompt size and context usage without sending a generation request.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public func inspectRequest(
+        for prompt: String,
+        request: RequestConfig = .init()
+    ) async throws -> RequestDiagnostics {
+        let resolved = resolve(request)
+        return try await diagnostics(for: prompt, resolved: resolved)
+    }
+
+    /// Inspect prompt + encoded context size without sending a generation request.
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    public func inspectRequest<Context: Encodable & Sendable>(
+        for prompt: String,
+        context: Context,
+        request: RequestConfig = .init()
+    ) async throws -> RequestDiagnostics {
+        let contextualPrompt = try contextPrompt(basePrompt: prompt, context: context, request: request)
+        return try await inspectRequest(for: contextualPrompt, request: request)
+    }
 
     /// Estimate the token count for a plain-text prompt using the resolved request model.
     @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
@@ -1426,6 +2065,27 @@ public actor SwiftFM {
         try await model.resolvedModel.tokenCount(for: transcriptEntries)
     }
 
+    /// Tool call names found in a transcript.
+    public static func toolCallNames(in transcript: Transcript) -> [String] {
+        transcript.flatMap { entry -> [String] in
+            guard case .toolCalls(let calls) = entry else { return [] }
+            return calls.map(\.toolName)
+        }
+    }
+
+    /// Tool output names found in a transcript.
+    public static func toolOutputNames(in transcript: Transcript) -> [String] {
+        transcript.compactMap { entry -> String? in
+            guard case .toolOutput(let output) = entry else { return nil }
+            return output.toolName
+        }
+    }
+
+    /// Readable structured-output shape for logs and tests.
+    public static func structuredOutputDescription(_ content: GeneratedContent) -> String {
+        content.debugDescription
+    }
+
     private static func makeSession(
         model: Model,
         tools: [any Tool],
@@ -1503,22 +2163,35 @@ public actor SwiftFM {
     }
 
     private func generateText(
-        prompt: Prompt,
-        request: RequestConfig
+        promptText: String,
+        request: RequestConfig,
+        forcedSessionPolicy: SessionPolicy? = nil,
+        includeOptionalTools: Bool = true,
+        retryCount: Int = 0
     ) async throws -> String {
-        let resolved = resolve(request)
-        try Self.ensureModelAvailable(resolved.model)
+        let resolved = resolve(
+            request,
+            forcedSessionPolicy: forcedSessionPolicy,
+            includeOptionalTools: includeOptionalTools
+        )
+        try await inspectIfNeeded(promptText: promptText, resolved: resolved)
 
         do {
+            try Self.ensureModelAvailable(resolved.model)
             let response = try await resolved.session.respond(
-                to: prompt,
+                to: Prompt(promptText),
                 options: resolved.options
             )
             return resolved.postProcessing.apply(to: response.content)
-        } catch let toolError as LanguageModelSession.ToolCallError {
-            throw SwiftFMError.toolCallFailed(toolError)
         } catch {
-            throw SwiftFMError.generationFailed(error)
+            return try await recoverText(
+                from: Self.map(error),
+                promptText: promptText,
+                request: request,
+                resolved: resolved,
+                includeOptionalTools: includeOptionalTools,
+                retryCount: retryCount
+            )
         }
     }
 
@@ -1528,9 +2201,10 @@ public actor SwiftFM {
         request: RequestConfig
     ) async throws -> GeneratedContent {
         let resolved = resolve(request)
-        try Self.ensureModelAvailable(resolved.model)
+        try await inspectIfNeeded(promptText: prompt, resolved: resolved)
 
         do {
+            try Self.ensureModelAvailable(resolved.model)
             let response = try await resolved.session.respond(
                 to: prompt,
                 schema: schema,
@@ -1541,7 +2215,7 @@ public actor SwiftFM {
         } catch let toolError as LanguageModelSession.ToolCallError {
             throw SwiftFMError.toolCallFailed(toolError)
         } catch {
-            throw SwiftFMError.generationFailed(error)
+            throw Self.map(error)
         }
     }
 
@@ -1615,7 +2289,124 @@ public actor SwiftFM {
         }
     }
 
-    private func resolve(_ request: RequestConfig) -> ResolvedRequest {
+    private func recoverText(
+        from error: Error,
+        promptText: String,
+        request: RequestConfig,
+        resolved: ResolvedRequest,
+        includeOptionalTools: Bool,
+        retryCount: Int
+    ) async throws -> String {
+        guard retryCount == 0 else { throw error }
+
+        let action = fallbackAction(for: error, policy: resolved.fallbackPolicy)
+
+        switch action {
+        case .fail:
+            throw error
+        case .fallbackText(let text):
+            recordDebug("fallback", "Returned fallback text for \(type(of: error)).", options: resolved.debugOptions)
+            return resolved.postProcessing.apply(to: text)
+        case .retryWithFreshSession:
+            recordDebug("fallback", "Retrying with a fresh session.", options: resolved.debugOptions)
+            return try await generateText(
+                promptText: promptText,
+                request: request,
+                forcedSessionPolicy: .freshPerRequest,
+                includeOptionalTools: includeOptionalTools,
+                retryCount: retryCount + 1
+            )
+        case .retryWithoutOptionalTools:
+            guard includeOptionalTools, !resolved.optionalTools.isEmpty else { throw error }
+            recordDebug("fallback", "Retrying without optional tools.", options: resolved.debugOptions)
+            return try await generateText(
+                promptText: promptText,
+                request: request,
+                forcedSessionPolicy: .freshPerRequest,
+                includeOptionalTools: false,
+                retryCount: retryCount + 1
+            )
+        }
+    }
+
+    private func fallbackAction(for error: Error, policy: FallbackPolicy) -> FallbackAction {
+        if case .modelUnavailable = error as? SwiftFMError {
+            return policy.unavailableModel
+        }
+
+        if case .toolCallFailed = error as? SwiftFMError {
+            return policy.toolFailure
+        }
+
+        guard let generationError = (error as? SwiftFMError)?.generationError else {
+            return .fail
+        }
+
+        switch generationError {
+        case .guardrailViolation:
+            return policy.guardrailViolation
+        case .exceededContextWindowSize:
+            return policy.contextOverflow
+        default:
+            return .fail
+        }
+    }
+
+    private func inspectIfNeeded(promptText: String, resolved: ResolvedRequest) async throws {
+        guard resolved.debugOptions.isEnabled else { return }
+
+        if #available(iOS 26.4, macOS 26.4, visionOS 26.4, *) {
+            let info = try await diagnostics(for: promptText, resolved: resolved)
+            var message = "Prompt: \(info.promptCharacterCount) characters"
+            if let promptTokenCount = info.promptTokenCount {
+                message += ", \(promptTokenCount) tokens of \(info.contextSize)"
+            }
+            message += ", \(info.toolCount) tools, session: \(info.sessionPolicy)"
+            recordDebug("request", message, options: resolved.debugOptions)
+
+            if let ratio = info.contextUsageRatio,
+               ratio >= resolved.debugOptions.contextWarningRatio {
+                recordDebug("context", "Prompt is using \(Int(ratio * 100))% of the context window.", options: resolved.debugOptions)
+            }
+        } else {
+            recordDebug("request", "Prompt: \(promptText.count) characters, \(resolved.tools.count) tools, session: \(resolved.sessionPolicy)", options: resolved.debugOptions)
+        }
+    }
+
+    @available(iOS 26.4, macOS 26.4, visionOS 26.4, *)
+    private func diagnostics(
+        for promptText: String,
+        resolved: ResolvedRequest
+    ) async throws -> RequestDiagnostics {
+        let model = resolved.model.resolvedModel
+        let promptTokenCount = try? await model.tokenCount(for: Prompt(promptText))
+        return .init(
+            promptCharacterCount: promptText.count,
+            promptTokenCount: promptTokenCount,
+            contextSize: model.contextSize,
+            toolCount: resolved.tools.count,
+            sessionPolicy: resolved.sessionPolicy
+        )
+    }
+
+    private func recordDebug(_ category: String, _ message: String, options: DebugOptions) {
+        guard options.isEnabled else { return }
+        if options.printsToConsole {
+            print("[SwiftFM] \(category): \(message)")
+        }
+        if options.keepsEvents {
+            debugEventsStorage.append(.init(category: category, message: message))
+            if debugEventsStorage.count > 100 {
+                debugEventsStorage.removeFirst(debugEventsStorage.count - 100)
+            }
+        }
+    }
+
+    private func resolve(
+        _ request: RequestConfig,
+        forcedSessionPolicy: SessionPolicy? = nil,
+        includeOptionalTools: Bool = true
+    ) -> ResolvedRequest {
         let model = request.model ?? config.model
         let options = Self.makeOptions(
             temperature: request.temperature ?? config.temperature,
@@ -1623,19 +2414,34 @@ public actor SwiftFM {
             sampling: request.sampling ?? config.sampling
         )
         let postProcessing = request.postProcessing ?? config.postProcessing
+        let sessionPolicy = forcedSessionPolicy ?? request.sessionPolicy ?? config.sessionPolicy
+        let fallbackPolicy = request.fallbackPolicy ?? config.fallbackPolicy
+        let debugOptions = request.debugOptions ?? config.debugOptions
+        let baseTools = request.tools ?? config.tools
+        let optionalTools = includeOptionalTools ? (request.optionalTools ?? config.optionalTools) : []
+        let tools = baseTools + optionalTools
 
-        if request.model == nil && request.tools == nil {
+        if sessionPolicy.usesSharedSession
+            && request.model == nil
+            && request.tools == nil
+            && request.optionalTools == nil
+            && includeOptionalTools {
             return .init(
                 model: model,
                 options: options,
                 session: session,
-                postProcessing: postProcessing
+                postProcessing: postProcessing,
+                sessionPolicy: sessionPolicy,
+                fallbackPolicy: fallbackPolicy,
+                debugOptions: debugOptions,
+                tools: tools,
+                optionalTools: optionalTools
             )
         }
 
         let oneShotSession = Self.makeSession(
             model: model,
-            tools: request.tools ?? config.tools,
+            tools: tools,
             instructions: config.system
         )
 
@@ -1643,7 +2449,12 @@ public actor SwiftFM {
             model: model,
             options: options,
             session: oneShotSession,
-            postProcessing: postProcessing
+            postProcessing: postProcessing,
+            sessionPolicy: sessionPolicy,
+            fallbackPolicy: fallbackPolicy,
+            debugOptions: debugOptions,
+            tools: tools,
+            optionalTools: optionalTools
         )
     }
 
@@ -1674,5 +2485,72 @@ public actor SwiftFM {
         let options: GenerationOptions
         let session: LanguageModelSession
         let postProcessing: TextPostProcessing
+        let sessionPolicy: SessionPolicy
+        let fallbackPolicy: FallbackPolicy
+        let debugOptions: DebugOptions
+        let tools: [any Tool]
+        let optionalTools: [any Tool]
+    }
+}
+
+/// Tiny Observable runner for SwiftUI and Observation-based apps.
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+@MainActor
+@Observable
+public final class SwiftFMRunner<Output: Sendable> {
+    public private(set) var isLoading: Bool
+    public private(set) var output: Output?
+    public private(set) var errorMessage: String?
+
+    public init(
+        isLoading: Bool = false,
+        output: Output? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.isLoading = isLoading
+        self.output = output
+        self.errorMessage = errorMessage
+    }
+
+    public func run(_ operation: @Sendable () async throws -> Output) async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            output = try await operation()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+    public func reset() {
+        isLoading = false
+        output = nil
+        errorMessage = nil
+    }
+}
+
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+extension SwiftFMRunner where Output == String {
+    public func runText(
+        _ prompt: String,
+        using fm: SwiftFM,
+        request: SwiftFM.RequestConfig = .init()
+    ) async {
+        await run {
+            try await fm.generateText(for: prompt, request: request)
+        }
+    }
+
+    public func runText(
+        from spec: SwiftFM.PromptSpec,
+        using fm: SwiftFM,
+        request: SwiftFM.RequestConfig = .init()
+    ) async {
+        await run {
+            try await fm.generateText(from: spec, request: request)
+        }
     }
 }

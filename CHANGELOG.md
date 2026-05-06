@@ -2,6 +2,69 @@
 
 All notable changes to this project are documented in this file.
 
+## 3.0.0 - 2026-05-06
+
+### Added
+- Session/context policy:
+  - `SessionPolicy.freshPerRequest`
+  - `SessionPolicy.reused`
+  - `SessionPolicy.manual`
+  - `Config.freshSessionPerRequest()`
+  - `Config.reusingSession()`
+  - `Config.manualSession()`
+  - `RequestConfig.freshSession()`
+  - `RequestConfig.reusedSession()`
+  - `clearSession()`
+- Fresh session per request is now the default behavior.
+- Guardrail and availability fallback policies:
+  - `FallbackPolicy`
+  - `FallbackAction`
+  - `fallbackText(_:)`
+  - `onGuardrailViolation(_:)`
+  - `onUnavailableModel(_:)`
+  - `retryWithReducedContext()`
+  - `retryWithoutOptionalTools()`
+- Lightweight structured workflows:
+  - `SwiftFM.workflow(generating:)`
+  - `SwiftFM.Workflow`
+- Generic mixed block responses:
+  - `ResponseBlock`
+  - `BlockResponse`
+  - `BlockResponseBuilder`
+  - `SwiftFM.blocks()`
+- Tool organization helpers:
+  - `ToolGroup`
+  - `ToolRegistry`
+  - `toolGroup(_:)`
+  - `toolRegistry()`
+  - config/request tool group builders
+  - optional tools for conservative retry behavior
+- Debug and testing helpers:
+  - `DebugOptions`
+  - `DebugEvent`
+  - `RequestDiagnostics`
+  - `inspectRequest(...)`
+  - `debugEvents`
+  - `clearDebugEvents()`
+  - transcript tool call/output inspection helpers
+  - structured output debug descriptions
+- Tiny Observable helper for SwiftUI and Observation-based apps:
+  - `SwiftFMRunner<Output>`
+  - `SwiftFMRunner<String>.runText(...)`
+
+### Changed
+- Default context behavior changed from reused session to fresh session per request.
+- README rewritten as a beginner-first v3 guide with copyable examples for session policy, fallbacks, workflows, mixed blocks, tool groups, diagnostics, and SwiftUI usage.
+- Updated the public source version marker to `3.0.0`.
+
+### Migration
+- One-shot apps usually do not need changes.
+- Conversation apps should opt into `.reusingSession()` or `.manualSession()`.
+- Use `clearSession()` when a reused/manual conversation should start over.
+
+### Tests
+- Added coverage for v3 builder APIs, session policy defaults, tool groups, fallback policies, mixed block responses, workflows, request diagnostics, Observable runner state, and fresh-session transcript behavior.
+
 ## 2.0.0 - 2026-04-10
 
 ### Added
